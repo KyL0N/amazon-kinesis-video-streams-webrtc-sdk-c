@@ -113,6 +113,9 @@ STATUS allocateSctp(PKvsPeerConnection pKvsPeerConnection)
     UINT32 currentDataChannelId = 0;
     UINT64 hashValue = 0;
     PKvsDataChannel pKvsDataChannel = NULL;
+    RtcSctpConfiguration sctpConfiguration;
+    BOOL locked = FALSE;
+    BOOL allocationStarted = FALSE;
 
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
     currentDataChannelId = (pKvsPeerConnection->dtlsIsServer) ? 1 : 0;
@@ -129,11 +132,29 @@ STATUS allocateSctp(PKvsPeerConnection pKvsPeerConnection)
     CHK_LOG_ERR(hashTableFree(data.unkeyedDataChannels));
 
     // Create the SCTP Session
+    MEMSET(&sctpSessionCallbacks, 0, SIZEOF(sctpSessionCallbacks));
     sctpSessionCallbacks.outboundPacketFunc = onSctpSessionOutboundPacket;
     sctpSessionCallbacks.dataChannelMessageFunc = onSctpSessionDataChannelMessage;
     sctpSessionCallbacks.dataChannelOpenFunc = onSctpSessionDataChannelOpen;
     sctpSessionCallbacks.customData = (UINT64) pKvsPeerConnection;
-    CHK_STATUS(createSctpSession(&sctpSessionCallbacks, pKvsPeerConnection->timerQueueHandle, &(pKvsPeerConnection->pSctpSession)));
+
+    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = TRUE;
+    CHK(!pKvsPeerConnection->sctpSessionAllocationStarted, STATUS_INVALID_OPERATION);
+    pKvsPeerConnection->sctpSessionAllocationStarted = TRUE;
+    allocationStarted = TRUE;
+    sctpConfiguration = pKvsPeerConnection->sctpConfiguration;
+    if (pKvsPeerConnection->onSctpEvent != NULL) {
+        sctpSessionCallbacks.eventFunc = onSctpSessionEvent;
+    }
+    if (pKvsPeerConnection->onSctpWritable != NULL) {
+        sctpSessionCallbacks.writableFunc = onSctpSessionWritable;
+    }
+    MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = FALSE;
+
+    CHK_STATUS(
+        createSctpSession(&sctpSessionCallbacks, &sctpConfiguration, pKvsPeerConnection->timerQueueHandle, &(pKvsPeerConnection->pSctpSession)));
 
     for (; currentDataChannelId < data.currentDataChannelId; currentDataChannelId += 2) {
         pKvsDataChannel = NULL;
@@ -157,6 +178,14 @@ STATUS allocateSctp(PKvsPeerConnection pKvsPeerConnection)
     }
 
 CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    }
+    if (STATUS_FAILED(retStatus) && allocationStarted && pKvsPeerConnection->pSctpSession == NULL) {
+        MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
+        pKvsPeerConnection->sctpSessionAllocationStarted = FALSE;
+        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    }
     CHK_LOG_ERR(retStatus);
 
     LEAVES();
@@ -669,6 +698,24 @@ CleanUp:
     LEAVES();
 }
 
+VOID onSctpSessionEvent(UINT64 customData, PRtcSctpEvent pEvent)
+{
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
+
+    if (pKvsPeerConnection != NULL && pEvent != NULL && pKvsPeerConnection->onSctpEvent != NULL) {
+        pKvsPeerConnection->onSctpEvent(pKvsPeerConnection->onSctpEventCustomData, pEvent);
+    }
+}
+
+VOID onSctpSessionWritable(UINT64 customData, UINT32 availableBytes)
+{
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
+
+    if (pKvsPeerConnection != NULL && pKvsPeerConnection->onSctpWritable != NULL) {
+        pKvsPeerConnection->onSctpWritable(pKvsPeerConnection->onSctpWritableCustomData, availableBytes);
+    }
+}
+
 VOID onDtlsOutboundPacket(UINT64 customData, PBYTE pBuffer, UINT32 bufferLen)
 {
     ENTERS();
@@ -1033,6 +1080,7 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
 
     pKvsPeerConnection->pSrtpSessionLock = MUTEX_CREATE(TRUE);
     pKvsPeerConnection->peerConnectionObjLock = MUTEX_CREATE(FALSE);
+    pKvsPeerConnection->sctpConfiguration.version = RTC_SCTP_CONFIGURATION_CURRENT_VERSION;
     pKvsPeerConnection->connectionState = RTC_PEER_CONNECTION_STATE_NONE;
     pKvsPeerConnection->MTU = pConfiguration->kvsRtcConfiguration.maximumTransmissionUnit == 0
         ? DEFAULT_MTU_SIZE_BYTES
@@ -1252,6 +1300,124 @@ CleanUp:
     }
     CHK_LOG_ERR(retStatus);
 
+    LEAVES();
+    return retStatus;
+}
+
+static STATUS validateSctpConfiguration(PRtcSctpConfiguration pConfiguration)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT32 initialRtoMs, minRtoMs, maxRtoMs;
+
+    CHK(pConfiguration != NULL, STATUS_NULL_ARG);
+    CHK(pConfiguration->version <= RTC_SCTP_CONFIGURATION_CURRENT_VERSION, STATUS_SCTP_CONFIGURATION_INVALID);
+    CHK(pConfiguration->sendBufferBytes <= 0x7fffffffU && pConfiguration->receiveBufferBytes <= 0x7fffffffU, STATUS_SCTP_CONFIGURATION_INVALID);
+    CHK(pConfiguration->sendBufferBytes == 0 || pConfiguration->writableThresholdBytes <= pConfiguration->sendBufferBytes,
+        STATUS_SCTP_CONFIGURATION_INVALID);
+    CHK(pConfiguration->pathMtu == 0 || (pConfiguration->pathMtu >= 576 && pConfiguration->pathMtu <= MAX_UDP_PACKET_SIZE),
+        STATUS_SCTP_CONFIGURATION_INVALID);
+    CHK(pConfiguration->congestionControl >= RTC_SCTP_CONGESTION_CONTROL_DEFAULT &&
+            pConfiguration->congestionControl <= RTC_SCTP_CONGESTION_CONTROL_RTCC,
+        STATUS_SCTP_CONFIGURATION_INVALID);
+    CHK(pConfiguration->streamScheduler >= RTC_SCTP_STREAM_SCHEDULER_DEFAULT &&
+            pConfiguration->streamScheduler <= RTC_SCTP_STREAM_SCHEDULER_FIRST_COME,
+        STATUS_SCTP_CONFIGURATION_INVALID);
+
+    initialRtoMs = pConfiguration->initialRtoMs == 0 ? SCTP_RTO_INITIAL : pConfiguration->initialRtoMs;
+    minRtoMs = pConfiguration->minRtoMs == 0 ? SCTP_RTO_MIN : pConfiguration->minRtoMs;
+    maxRtoMs = pConfiguration->maxRtoMs == 0 ? SCTP_RTO_MAX : pConfiguration->maxRtoMs;
+    CHK(minRtoMs <= initialRtoMs && initialRtoMs <= maxRtoMs, STATUS_SCTP_CONFIGURATION_INVALID);
+
+CleanUp:
+    return retStatus;
+}
+
+STATUS peerConnectionSetSctpConfiguration(PRtcPeerConnection pRtcPeerConnection, PRtcSctpConfiguration pConfiguration)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+    BOOL locked = FALSE;
+
+    CHK(pKvsPeerConnection != NULL && pConfiguration != NULL, STATUS_NULL_ARG);
+    CHK_STATUS(validateSctpConfiguration(pConfiguration));
+
+    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = TRUE;
+    CHK(!pKvsPeerConnection->sctpSessionAllocationStarted && pKvsPeerConnection->pSctpSession == NULL, STATUS_INVALID_OPERATION);
+    pKvsPeerConnection->sctpConfiguration = *pConfiguration;
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    }
+    CHK_LOG_ERR(retStatus);
+    LEAVES();
+    return retStatus;
+}
+
+STATUS peerConnectionOnSctpEvent(PRtcPeerConnection pRtcPeerConnection, UINT64 customData, RtcOnSctpEvent rtcOnSctpEvent)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+    BOOL locked = FALSE;
+
+    CHK(pKvsPeerConnection != NULL && rtcOnSctpEvent != NULL, STATUS_NULL_ARG);
+    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = TRUE;
+    CHK(!pKvsPeerConnection->sctpSessionAllocationStarted && pKvsPeerConnection->pSctpSession == NULL, STATUS_INVALID_OPERATION);
+    pKvsPeerConnection->onSctpEvent = rtcOnSctpEvent;
+    pKvsPeerConnection->onSctpEventCustomData = customData;
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    }
+    CHK_LOG_ERR(retStatus);
+    LEAVES();
+    return retStatus;
+}
+
+STATUS peerConnectionOnSctpWritable(PRtcPeerConnection pRtcPeerConnection, UINT64 customData, RtcOnSctpWritable rtcOnSctpWritable)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+    BOOL locked = FALSE;
+
+    CHK(pKvsPeerConnection != NULL && rtcOnSctpWritable != NULL, STATUS_NULL_ARG);
+    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = TRUE;
+    CHK(!pKvsPeerConnection->sctpSessionAllocationStarted && pKvsPeerConnection->pSctpSession == NULL, STATUS_INVALID_OPERATION);
+    pKvsPeerConnection->onSctpWritable = rtcOnSctpWritable;
+    pKvsPeerConnection->onSctpWritableCustomData = customData;
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    }
+    CHK_LOG_ERR(retStatus);
+    LEAVES();
+    return retStatus;
+}
+
+STATUS rtcPeerConnectionGetSctpMetrics(PRtcPeerConnection pRtcPeerConnection, PRtcSctpMetrics pMetrics)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    CHK(pKvsPeerConnection != NULL && pMetrics != NULL, STATUS_NULL_ARG);
+#ifdef ENABLE_DATA_CHANNEL
+    CHK(pKvsPeerConnection->pSctpSession != NULL, STATUS_INVALID_OPERATION);
+    CHK_STATUS(sctpSessionGetMetrics(pKvsPeerConnection->pSctpSession, pMetrics));
+#else
+    CHK(FALSE, STATUS_NOT_IMPLEMENTED);
+#endif
+
+CleanUp:
+    CHK_LOG_ERR(retStatus);
     LEAVES();
     return retStatus;
 }

@@ -95,6 +95,12 @@ typedef struct {
     PSrtpSession pSrtpSession;
 
     PSctpSession pSctpSession;
+    BOOL sctpSessionAllocationStarted;
+    RtcSctpConfiguration sctpConfiguration;
+    RtcOnSctpEvent onSctpEvent;
+    UINT64 onSctpEventCustomData;
+    RtcOnSctpWritable onSctpWritable;
+    UINT64 onSctpWritableCustomData;
 
     PSessionDescription pRemoteSessionDescription;
     PDoubleList pTransceivers;
@@ -198,6 +204,8 @@ STATUS onFrameDroppedFunc(UINT64, UINT16, UINT16, UINT32);
 VOID onSctpSessionOutboundPacket(UINT64, PBYTE, UINT32);
 VOID onSctpSessionDataChannelMessage(UINT64, UINT32, BOOL, PBYTE, UINT32);
 VOID onSctpSessionDataChannelOpen(UINT64, UINT32, PBYTE, UINT32, PRtcDataChannelInit);
+VOID onSctpSessionEvent(UINT64, PRtcSctpEvent);
+VOID onSctpSessionWritable(UINT64, UINT32);
 
 STATUS sendPacketToRtpReceiver(PKvsPeerConnection, PBYTE, UINT32);
 STATUS changePeerConnectionState(PKvsPeerConnection, RTC_PEER_CONNECTION_STATE);

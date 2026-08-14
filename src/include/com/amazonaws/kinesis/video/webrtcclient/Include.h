@@ -534,9 +534,12 @@ extern "C" {
  *  @{
  */
 #define STATUS_SCTP_BASE                 STATUS_PEERCONNECTION_BASE + 0x01000000
-#define STATUS_SCTP_SESSION_SETUP_FAILED STATUS_SCTP_BASE + 0x00000001
-#define STATUS_SCTP_INVALID_DCEP_PACKET  STATUS_SCTP_BASE + 0x00000002
-#define STATUS_SCTP_SENDV_FAILED         STATUS_SCTP_BASE + 0x00000003
+#define STATUS_SCTP_SESSION_SETUP_FAILED  STATUS_SCTP_BASE + 0x00000001
+#define STATUS_SCTP_INVALID_DCEP_PACKET   STATUS_SCTP_BASE + 0x00000002
+#define STATUS_SCTP_SENDV_FAILED          STATUS_SCTP_BASE + 0x00000003
+#define STATUS_SCTP_CONFIGURATION_INVALID STATUS_SCTP_BASE + 0x00000004
+#define STATUS_SCTP_GET_METRICS_FAILED    STATUS_SCTP_BASE + 0x00000005
+#define STATUS_SCTP_INVALID_NOTIFICATION  STATUS_SCTP_BASE + 0x00000006
 /*!@} */
 
 /////////////////////////////////////////////////////
@@ -778,6 +781,14 @@ extern "C" {
  * Version of KvsIceAgentMetrics structure
  */
 #define ICE_AGENT_METRICS_CURRENT_VERSION 0
+
+/**
+ * Versions of the SCTP tuning and metrics structures
+ */
+#define RTC_SCTP_GLOBAL_CONFIGURATION_CURRENT_VERSION 0
+#define RTC_SCTP_CONFIGURATION_CURRENT_VERSION        0
+#define RTC_SCTP_EVENT_CURRENT_VERSION                0
+#define RTC_SCTP_METRICS_CURRENT_VERSION              0
 
 /*!@} */
 
@@ -1183,6 +1194,134 @@ typedef enum {
 /*! \addtogroup Callbacks
  * @{
  */
+
+typedef enum {
+    RTC_SCTP_CONGESTION_CONTROL_DEFAULT = 0,
+    RTC_SCTP_CONGESTION_CONTROL_RFC2581,
+    RTC_SCTP_CONGESTION_CONTROL_HSTCP,
+    RTC_SCTP_CONGESTION_CONTROL_HTCP,
+    RTC_SCTP_CONGESTION_CONTROL_RTCC,
+} RTC_SCTP_CONGESTION_CONTROL;
+
+typedef enum {
+    RTC_SCTP_STREAM_SCHEDULER_DEFAULT = 0,
+    RTC_SCTP_STREAM_SCHEDULER_ROUND_ROBIN,
+    RTC_SCTP_STREAM_SCHEDULER_ROUND_ROBIN_PACKET,
+    RTC_SCTP_STREAM_SCHEDULER_PRIORITY,
+    RTC_SCTP_STREAM_SCHEDULER_FAIR_BANDWIDTH,
+    RTC_SCTP_STREAM_SCHEDULER_FIRST_COME,
+} RTC_SCTP_STREAM_SCHEDULER;
+
+typedef enum {
+    RTC_SCTP_EVENT_ASSOCIATION_CHANGE = 0,
+    RTC_SCTP_EVENT_PEER_ADDRESS_CHANGE,
+    RTC_SCTP_EVENT_REMOTE_ERROR,
+    RTC_SCTP_EVENT_SEND_FAILED,
+    RTC_SCTP_EVENT_SHUTDOWN,
+    RTC_SCTP_EVENT_PARTIAL_DELIVERY,
+    RTC_SCTP_EVENT_STREAM_RESET,
+    RTC_SCTP_EVENT_SENDER_DRY,
+    RTC_SCTP_EVENT_UNKNOWN,
+} RTC_SCTP_EVENT_TYPE;
+
+/**
+ * Process-wide usrsctp settings. Call configureKvsSctpGlobal before initKvsWebRtc.
+ * A zero timer interval preserves the SDK default of 100 ms. Zero send/receive
+ * space values preserve the usrsctp defaults.
+ */
+typedef struct {
+    UINT32 version;
+    UINT32 timerIntervalMs;
+    UINT32 sendSpaceBytes;
+    UINT32 receiveSpaceBytes;
+    BOOL enableEcn;
+} RtcSctpGlobalConfiguration, *PRtcSctpGlobalConfiguration;
+
+/**
+ * Settings applied to a future SCTP association. Zero values preserve the SDK
+ * defaults, except writableThresholdBytes which resolves to one byte when a
+ * writable callback is registered. Configure this after createPeerConnection
+ * and before signaling.
+ */
+typedef struct {
+    UINT32 version;
+    UINT32 sendBufferBytes;
+    UINT32 receiveBufferBytes;
+    UINT32 pathMtu;
+    UINT32 initialRtoMs;
+    UINT32 minRtoMs;
+    UINT32 maxRtoMs;
+    UINT16 outboundStreams;
+    UINT16 inboundStreams;
+    UINT16 pathMaxRetransmits;
+    UINT16 associationMaxRetransmits;
+    UINT32 writableThresholdBytes;
+    BOOL enableMessageInterleaving;
+    RTC_SCTP_CONGESTION_CONTROL congestionControl;
+    RTC_SCTP_STREAM_SCHEDULER streamScheduler;
+} RtcSctpConfiguration, *PRtcSctpConfiguration;
+
+/**
+ * Stable representation of an usrsctp notification. The object is valid only
+ * for the duration of the callback.
+ */
+typedef struct {
+    UINT32 version;
+    RTC_SCTP_EVENT_TYPE type;
+    UINT32 flags;
+    UINT32 state;
+    UINT32 errorCode;
+    UINT32 associationId;
+    UINT16 notificationType;
+    UINT16 streamId;
+    UINT16 outboundStreams;
+    UINT16 inboundStreams;
+} RtcSctpEvent, *PRtcSctpEvent;
+
+typedef struct {
+    UINT32 version;
+    UINT32 timerIntervalMs;
+    UINT32 associationState;
+    UINT32 peerReceiverWindowBytes;
+    UINT32 congestionWindowBytes;
+    UINT32 smoothedRttMs;
+    UINT32 retransmissionTimeoutMs;
+    UINT32 pathMtu;
+    UINT32 fragmentationPointBytes;
+    UINT32 sendBufferBytes;
+    UINT32 receiveBufferBytes;
+    UINT32 initialRtoMs;
+    UINT32 minRtoMs;
+    UINT32 maxRtoMs;
+    UINT16 unacknowledgedDataChunks;
+    UINT16 pendingDataChunks;
+    UINT16 inboundStreams;
+    UINT16 outboundStreams;
+    UINT16 pathMaxRetransmits;
+    UINT16 associationMaxRetransmits;
+    BOOL messageInterleaving;
+    RTC_SCTP_CONGESTION_CONTROL congestionControl;
+    RTC_SCTP_STREAM_SCHEDULER streamScheduler;
+    BOOL socketWritable;
+    BOOL sendBlocked;
+    UINT32 writableThresholdBytes;
+    UINT32 lastWritableBytes;
+    UINT64 sendCalls;
+    UINT64 sendFailures;
+    UINT64 blockedWrites;
+    UINT64 writableCallbacks;
+    UINT64 notifications;
+    INT32 lastSendErrno;
+} RtcSctpMetrics, *PRtcSctpMetrics;
+
+/**
+ * These callbacks run in the usrsctp packet/timer processing path. They must
+ * return promptly and hand work to an application-owned queue instead of
+ * blocking or tearing down the peer connection reentrantly.
+ */
+typedef VOID (*RtcOnSctpEvent)(UINT64, PRtcSctpEvent);
+/** Reports the current number of free bytes in the usrsctp send buffer. */
+typedef VOID (*RtcOnSctpWritable)(UINT64, UINT32);
 
 /**
  * @brief RtcOnFrame is fired everytime a frame is received from
@@ -1903,6 +2042,18 @@ PUBLIC_API STATUS configureTransceiverRollingBuffer(PRtcRtpTransceiver, PRtcMedi
  */
 PUBLIC_API STATUS createPeerConnection(PRtcConfiguration, PRtcPeerConnection*);
 
+/** Configure a future SCTP association. Must be called before SCTP allocation. */
+PUBLIC_API STATUS peerConnectionSetSctpConfiguration(PRtcPeerConnection, PRtcSctpConfiguration);
+
+/** Register for association, failure, shutdown, stream reset, and sender-dry notifications. */
+PUBLIC_API STATUS peerConnectionOnSctpEvent(PRtcPeerConnection, UINT64, RtcOnSctpEvent);
+
+/** Register for an edge-triggered notification after a blocked send reaches the configured free-byte threshold. */
+PUBLIC_API STATUS peerConnectionOnSctpWritable(PRtcPeerConnection, UINT64, RtcOnSctpWritable);
+
+/** Read a snapshot of the current SCTP association and SDK-side send counters. */
+PUBLIC_API STATUS rtcPeerConnectionGetSctpMetrics(PRtcPeerConnection, PRtcSctpMetrics);
+
 /**
  * @brief Free a RtcPeerConnection
  *
@@ -2222,6 +2373,12 @@ PUBLIC_API STATUS freeTransceiver(PRtcRtpTransceiver*);
  * @return STATUS code of the execution. STATUS_SUCCESS on success
  */
 PUBLIC_API STATUS initKvsWebRtc(VOID);
+
+/** Configure process-wide usrsctp settings before initKvsWebRtc. */
+PUBLIC_API STATUS configureKvsSctpGlobal(PRtcSctpGlobalConfiguration);
+
+/** Return the process-wide SCTP configuration, including resolved defaults. */
+PUBLIC_API STATUS getKvsSctpGlobalConfiguration(PRtcSctpGlobalConfiguration);
 
 /**
  * @brief Deinitializes global state needed for all RtcPeerConnections. It must only be called once
