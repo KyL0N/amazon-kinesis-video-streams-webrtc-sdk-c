@@ -2,21 +2,20 @@ cmake_minimum_required(VERSION 3.6.3)
 
 project(libopenssl-download LANGUAGES C)
 
-# An empty GIT_SUBMODULES list means "do not initialize submodules" only with
-# CMP0097 NEW. OpenSSL's auxiliary boringssl, krb5, pyca-cryptography, and
-# wycheproof repositories are not needed to build libssl/libcrypto, and pulling
-# them is especially expensive on embedded/cross-build workers.
-if(POLICY CMP0097)
-  cmake_policy(SET CMP0097 NEW)
-endif()
+# Use immutable, checksummed release archives. ExternalProject's shallow git
+# path adds --no-single-branch for a tag and can still transfer the full OpenSSL
+# repository; recursive submodule handling can add four more unused projects.
 
 # Select OpenSSL version based on USE_OPENSSL3 flag.
 # OpenSSL 3.x uses a different tag format: "openssl-X.Y.Z" vs "OpenSSL_X_Y_Zp"
 if(USE_OPENSSL3)
   set(OPENSSL_GIT_TAG "openssl-3.5.7")
+  set(OPENSSL_ARCHIVE_SHA256 "d71a811bfbd9153d7b30cbe476263302ee4b04a9a47ffea6e6a782326805c93f")
 else()
   set(OPENSSL_GIT_TAG "OpenSSL_1_1_1t")
+  set(OPENSSL_ARCHIVE_SHA256 "b1270f044e36452e15d1f2e18b702691a240b0445080282f2c7daaea8704ec5e")
 endif()
+set(OPENSSL_ARCHIVE_URL "https://github.com/openssl/openssl/archive/refs/tags/${OPENSSL_GIT_TAG}.tar.gz")
 
 message(STATUS "Building OpenSSL from source: ${OPENSSL_GIT_TAG}")
 
@@ -56,11 +55,8 @@ message(STATUS "INSTALL_COMMAND is ${MAKE_EXE} install_sw")
 
 include(ExternalProject)
 ExternalProject_Add(project_libopenssl
-    GIT_REPOSITORY    https://github.com/openssl/openssl.git
-    GIT_TAG           ${OPENSSL_GIT_TAG}
-    GIT_PROGRESS      TRUE
-    GIT_SHALLOW       TRUE
-    GIT_SUBMODULES    ""
+    URL               ${OPENSSL_ARCHIVE_URL}
+    URL_HASH          SHA256=${OPENSSL_ARCHIVE_SHA256}
     PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/build
     CONFIGURE_COMMAND ${CONFIGURE_COMMAND}
     BUILD_COMMAND     ${MAKE_EXE}
