@@ -76,11 +76,20 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 endif()
 
-execute_process(
-        COMMAND git rev-parse HEAD
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE GIT_COMMIT_HASH
-        OUTPUT_STRIP_TRAILING_WHITESPACE)
+set(GIT_COMMIT_HASH "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(
+          COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+          RESULT_VARIABLE GIT_COMMIT_RESULT
+          OUTPUT_VARIABLE GIT_COMMIT_OUTPUT
+          ERROR_QUIET
+          OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(GIT_COMMIT_RESULT EQUAL 0 AND NOT GIT_COMMIT_OUTPUT STREQUAL "")
+    set(GIT_COMMIT_HASH "${GIT_COMMIT_OUTPUT}")
+  endif()
+endif()
 
 add_definitions(-DSDK_VERSION=\"${GIT_COMMIT_HASH}\")
 add_definitions(-DVERSION_STRING=\"${PROJECT_VERSION}\")
