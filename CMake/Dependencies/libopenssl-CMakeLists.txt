@@ -57,6 +57,7 @@ include(ExternalProject)
 ExternalProject_Add(project_libopenssl
     URL               ${OPENSSL_ARCHIVE_URL}
     URL_HASH          SHA256=${OPENSSL_ARCHIVE_SHA256}
+    DOWNLOAD_DIR      ${OPEN_SRC_INSTALL_PREFIX}/download-cache
     PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/build
     CONFIGURE_COMMAND ${CONFIGURE_COMMAND}
     BUILD_COMMAND     ${MAKE_EXE}
