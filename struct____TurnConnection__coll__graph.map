@@ -1,0 +1,42 @@
+<map id="__TurnConnection" name="__TurnConnection">
+<area shape="rect" id="Node000001" title=" " alt="" coords="841,1251,1015,1516"/>
+<area shape="rect" id="Node000002" href="$struct____SocketConnection.html" title=" " alt="" coords="90,616,345,861"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="272,861,351,1041,401,1142,448,1184,501,1222,557,1254,614,1283,727,1327,826,1357,825,1362,725,1332,612,1287,554,1259,498,1226,445,1188,397,1146,346,1043,267,863"/>
+<area shape="poly" id="edge7_Node000002_Node000002" title=" " alt="" coords="346,708,364,719,371,738,369,751,361,761,357,758,364,749,366,739,360,723,343,712"/>
+<area shape="rect" id="Node000015" href="$structConnectionListener.html" title=" " alt="" coords="139,969,296,1134"/>
+<area shape="poly" id="edge19_Node000015_Node000002" title=" " alt="" coords="220,862,220,952,215,952,215,862"/>
+<area shape="rect" id="Node000016" href="$structTurnConnectionCallbacks.html" title=" " alt="" coords="535,1019,713,1084"/>
+<area shape="poly" id="edge22_Node000016_Node000002" title=" " alt="" coords="347,850,448,932,466,940,482,944,498,948,517,956,552,979,583,1005,579,1009,549,984,515,961,496,953,481,949,465,945,445,937,343,854"/>
+<area shape="rect" id="Node000003" href="$structKvsIpAddress.html" title=" " alt="" coords="804,293,924,419"/>
+<area shape="poly" id="edge17_Node000001_Node000003" title=" " alt="" coords="908,418,940,476,964,542,975,608,982,690,984,883,976,1077,964,1227,963,1235,958,1234,959,1226,971,1077,978,883,976,691,970,609,959,543,935,478,904,420"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="805,386,660,454,575,498,492,545,360,633,357,628,489,540,573,493,658,450,802,381"/>
+<area shape="rect" id="Node000008" href="$structTurnPeer.html" title=" " alt="" coords="1359,596,1591,881"/>
+<area shape="poly" id="edge9_Node000008_Node000003" title=" " alt="" coords="925,376,1009,409,1115,457,1232,519,1347,593,1344,598,1229,523,1113,462,1007,414,923,381"/>
+<area shape="rect" id="Node000011" href="$structDualKvsIpAddresses.html" title=" " alt="" coords="796,706,943,771"/>
+<area shape="poly" id="edge13_Node000011_Node000003" title=" " alt="" coords="867,419,868,572,871,689,865,690,863,572,861,419"/>
+<area shape="poly" id="edge21_Node000016_Node000003" title=" " alt="" coords="805,394,754,430,699,477,648,533,626,564,609,597,591,650,581,706,577,763,579,819,593,922,612,1002,607,1003,588,923,574,819,572,763,576,705,586,649,604,595,622,561,643,529,695,473,750,426,802,390"/>
+<area shape="rect" id="Node000004" href="$struct____TlsSession.html" title=" " alt="" coords="85,323,182,389"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="143,389,190,599,184,600,138,390"/>
+<area shape="rect" id="Node000005" href="$structTlsSessionCallbacks.html" title=" " alt="" coords="5,5,235,131"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="126,131,134,307,128,307,120,131"/>
+<area shape="rect" id="Node000006" href="$struct____DtlsSession.html" title=" " alt="" coords="237,193,451,519"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="295,520,277,573,267,602,262,600,272,571,290,518"/>
+<area shape="rect" id="Node000007" href="$structDtlsSessionCallbacks.html" title=" " alt="" coords="259,5,488,131"/>
+<area shape="poly" id="edge6_Node000006_Node000007" title=" " alt="" coords="370,131,365,177,360,176,364,131"/>
+<area shape="poly" id="edge8_Node000001_Node000008" title=" " alt="" coords="1382,883,1341,960,1326,1000,1318,1036,1312,1100,1308,1131,1300,1162,1284,1194,1259,1228,1209,1275,1150,1312,1089,1340,1031,1360,1029,1355,1087,1335,1148,1307,1206,1271,1255,1225,1280,1191,1295,1160,1303,1130,1307,1100,1313,1035,1321,998,1336,958,1377,880"/>
+<area shape="rect" id="Node000009" href="$structTransactionIdStore.html" title=" " alt="" coords="1375,283,1575,429"/>
+<area shape="poly" id="edge10_Node000008_Node000009" title=" " alt="" coords="1477,429,1477,580,1472,580,1472,429"/>
+<area shape="rect" id="Node000010" href="$structIceServer.html" title=" " alt="" coords="819,959,912,1144"/>
+<area shape="poly" id="edge11_Node000001_Node000010" title=" " alt="" coords="870,1144,880,1226,882,1234,876,1235,875,1227,865,1145"/>
+<area shape="poly" id="edge12_Node000010_Node000011" title=" " alt="" coords="868,772,861,846,859,935,859,942,854,942,853,935,855,846,862,771"/>
+<area shape="rect" id="Node000012" href="$structStunPacket.html" title=" " alt="" coords="1043,1009,1173,1094"/>
+<area shape="poly" id="edge14_Node000001_Node000012" title=" " alt="" coords="1088,1096,1010,1237,1006,1235,1083,1093"/>
+<area shape="rect" id="Node000013" href="$structStunHeader.html" title=" " alt="" coords="1189,676,1334,801"/>
+<area shape="poly" id="edge15_Node000012_Node000013" title=" " alt="" coords="1251,802,1232,868,1204,936,1184,968,1161,998,1157,995,1179,965,1199,933,1227,866,1246,801"/>
+<area shape="rect" id="Node000014" href="$structStunAttributeHeader.html" title=" " alt="" coords="1017,696,1164,781"/>
+<area shape="poly" id="edge16_Node000012_Node000014" title=" " alt="" coords="1096,782,1107,992,1102,992,1090,782"/>
+<area shape="poly" id="edge18_Node000001_Node000015" title=" " alt="" coords="200,1134,202,1182,209,1205,221,1225,238,1241,260,1257,321,1284,397,1308,484,1327,666,1356,825,1372,824,1377,665,1361,483,1333,396,1313,319,1289,258,1261,234,1246,217,1228,204,1207,197,1183,195,1134"/>
+<area shape="poly" id="edge20_Node000001_Node000016" title=" " alt="" coords="632,1084,650,1153,667,1191,689,1225,719,1258,754,1287,828,1334,825,1338,751,1291,716,1262,685,1228,662,1193,645,1155,627,1085"/>
+<area shape="rect" id="Node000017" href="$structTurnProfileDiagnostics.html" title=" " alt="" coords="1443,989,1642,1114"/>
+<area shape="poly" id="edge23_Node000001_Node000017" title=" " alt="" coords="1486,1116,1421,1175,1345,1229,1266,1271,1184,1306,1103,1335,1032,1358,1030,1352,1102,1330,1182,1301,1264,1266,1343,1224,1418,1170,1482,1112"/>
+</map>
