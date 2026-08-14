@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.6.3)
 
 project(libopenssl-download LANGUAGES C)
 
+# An empty GIT_SUBMODULES list means "do not initialize submodules" only with
+# CMP0097 NEW. OpenSSL's auxiliary boringssl, krb5, pyca-cryptography, and
+# wycheproof repositories are not needed to build libssl/libcrypto, and pulling
+# them is especially expensive on embedded/cross-build workers.
+if(POLICY CMP0097)
+  cmake_policy(SET CMP0097 NEW)
+endif()
+
 # Select OpenSSL version based on USE_OPENSSL3 flag.
 # OpenSSL 3.x uses a different tag format: "openssl-X.Y.Z" vs "OpenSSL_X_Y_Zp"
 if(USE_OPENSSL3)
@@ -52,6 +60,7 @@ ExternalProject_Add(project_libopenssl
     GIT_TAG           ${OPENSSL_GIT_TAG}
     GIT_PROGRESS      TRUE
     GIT_SHALLOW       TRUE
+    GIT_SUBMODULES    ""
     PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/build
     CONFIGURE_COMMAND ${CONFIGURE_COMMAND}
     BUILD_COMMAND     ${MAKE_EXE}
