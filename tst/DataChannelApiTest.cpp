@@ -54,6 +54,17 @@ TEST_F(DataChannelApiTest, handleDcepPacket_RejectsOversizedLabelLength)
     // handleDcepPacket will reject the packet at the bounds check before reaching usrsctp_sendv.
     EXPECT_EQ(STATUS_SCTP_INVALID_DCEP_PACKET, handleDcepPacket(&sctpSession, 0, dcepPacket, SIZEOF(dcepPacket)));
 }
+
+TEST_F(DataChannelApiTest, handleDcepPacket_RejectsInvalidChannelType)
+{
+    BYTE dcepPacket[] = {0x03, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x01, 0x00, 0x00, 0x41};
+    SctpSession sctpSession;
+    MEMSET(&sctpSession, 0, SIZEOF(SctpSession));
+    sctpSession.socket = (struct socket*) 0x1;
+
+    EXPECT_EQ(STATUS_SCTP_INVALID_DCEP_PACKET, handleDcepPacket(&sctpSession, 0, dcepPacket, SIZEOF(dcepPacket)));
+}
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

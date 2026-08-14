@@ -469,6 +469,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityUnorder
     for (auto i = 0; i <= 100 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4 ; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
+    EXPECT_EQ(dataChannelSend(pOfferDataChannel, FALSE, (PBYTE) TEST_DATA_CHANNEL_MESSAGE, STRLEN(TEST_DATA_CHANNEL_MESSAGE)), STATUS_SUCCESS);
     // Close the connection to avoid data race while accessing SctpSession
     closePeerConnection(offerPc);
     closePeerConnection(answerPc);
@@ -477,6 +478,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityUnorder
     pSctpSession = ((PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection)->pSctpSession;
 
     ASSERT_EQ(pSctpSession->spa.sendv_sndinfo.snd_flags, SCTP_UNORDERED);
+    ASSERT_EQ(pSctpSession->spa.sendv_flags & SCTP_SEND_PRINFO_VALID, SCTP_SEND_PRINFO_VALID);
     ASSERT_EQ(pSctpSession->spa.sendv_prinfo.pr_policy, SCTP_PR_SCTP_TTL);
     ASSERT_EQ(pSctpSession->spa.sendv_prinfo.pr_value, rtcDataChannelInit.maxPacketLifeTime.value);
 
@@ -554,6 +556,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityUnOrder
     for (auto i = 0; i <= 100 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4 ; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
+    EXPECT_EQ(dataChannelSend(pOfferDataChannel, FALSE, (PBYTE) TEST_DATA_CHANNEL_MESSAGE, STRLEN(TEST_DATA_CHANNEL_MESSAGE)), STATUS_SUCCESS);
 
     // Close the connection to avoid data race while accessing SctpSession
     closePeerConnection(offerPc);
@@ -563,6 +566,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityUnOrder
     pSctpSession = ((PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection)->pSctpSession;
 
     ASSERT_EQ(pSctpSession->spa.sendv_sndinfo.snd_flags, SCTP_UNORDERED);
+    ASSERT_EQ(pSctpSession->spa.sendv_flags & SCTP_SEND_PRINFO_VALID, SCTP_SEND_PRINFO_VALID);
     ASSERT_EQ(pSctpSession->spa.sendv_prinfo.pr_policy, SCTP_PR_SCTP_RTX);
     ASSERT_EQ(pSctpSession->spa.sendv_prinfo.pr_value, rtcDataChannelInit.maxRetransmits.value);
 
@@ -640,6 +644,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityOrdered
     for (auto i = 0; i <= 100 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4 ; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
+    EXPECT_EQ(dataChannelSend(pOfferDataChannel, FALSE, (PBYTE) TEST_DATA_CHANNEL_MESSAGE, STRLEN(TEST_DATA_CHANNEL_MESSAGE)), STATUS_SUCCESS);
 
     // Close the connection to avoid data race while accessing SctpSession
     closePeerConnection(offerPc);
@@ -649,6 +654,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityOrdered
     pSctpSession = ((PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection)->pSctpSession;
 
     ASSERT_NE(pSctpSession->spa.sendv_sndinfo.snd_flags, SCTP_UNORDERED);
+    ASSERT_EQ(pSctpSession->spa.sendv_flags & SCTP_SEND_PRINFO_VALID, SCTP_SEND_PRINFO_VALID);
     ASSERT_EQ(pSctpSession->spa.sendv_prinfo.pr_policy, SCTP_PR_SCTP_TTL);
     ASSERT_EQ(pSctpSession->spa.sendv_prinfo.pr_value, rtcDataChannelInit.maxPacketLifeTime.value);
 
@@ -726,6 +732,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityOrdered
     for (auto i = 0; i <= 100 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4 ; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
+    EXPECT_EQ(dataChannelSend(pOfferDataChannel, FALSE, (PBYTE) TEST_DATA_CHANNEL_MESSAGE, STRLEN(TEST_DATA_CHANNEL_MESSAGE)), STATUS_SUCCESS);
 
     // Close the connection to avoid data race while accessing SctpSession
     closePeerConnection(offerPc);
@@ -734,6 +741,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityOrdered
     pSctpSession = ((PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection)->pSctpSession;
     
     ASSERT_NE(pSctpSession->spa.sendv_sndinfo.snd_flags, SCTP_UNORDERED);
+    ASSERT_EQ(pSctpSession->spa.sendv_flags & SCTP_SEND_PRINFO_VALID, SCTP_SEND_PRINFO_VALID);
     ASSERT_EQ(pSctpSession->spa.sendv_prinfo.pr_policy, SCTP_PR_SCTP_RTX);
     ASSERT_EQ(pSctpSession->spa.sendv_prinfo.pr_value, rtcDataChannelInit.maxRetransmits.value);
 
@@ -831,8 +839,13 @@ TEST_F(DataChannelFunctionalityTest, dataChannelOpen_OversizedNameIsRejected)
     UINT32 oversizedLen = MAX_DATA_CHANNEL_NAME_LEN + 100;
     BYTE oversizedName[MAX_DATA_CHANNEL_NAME_LEN + 100];
     volatile SIZE_T onDataChannelCount = 0;
+    RtcDataChannelInit rtcDataChannelInit;
 
     MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    MEMSET(&rtcDataChannelInit, 0x00, SIZEOF(RtcDataChannelInit));
+    rtcDataChannelInit.ordered = TRUE;
+    NULLABLE_SET_EMPTY(rtcDataChannelInit.maxPacketLifeTime);
+    NULLABLE_SET_EMPTY(rtcDataChannelInit.maxRetransmits);
     MEMSET(oversizedName, 'A', oversizedLen);
 
     EXPECT_EQ(createPeerConnection(&configuration, &pPeerConnection), STATUS_SUCCESS);
@@ -845,7 +858,7 @@ TEST_F(DataChannelFunctionalityTest, dataChannelOpen_OversizedNameIsRejected)
 
     EXPECT_EQ(peerConnectionOnDataChannel(pPeerConnection, (UINT64) &onDataChannelCount, onDataChannelCb), STATUS_SUCCESS);
 
-    onSctpSessionDataChannelOpen((UINT64) pKvsPeerConnection, 0, oversizedName, oversizedLen);
+    onSctpSessionDataChannelOpen((UINT64) pKvsPeerConnection, 0, oversizedName, oversizedLen, &rtcDataChannelInit);
 
     EXPECT_EQ(ATOMIC_LOAD(&onDataChannelCount), 0);
 
@@ -863,8 +876,13 @@ TEST_F(DataChannelFunctionalityTest, dataChannelOpen_NormalNameIsPreserved)
     const CHAR normalName[] = "my-data-channel";
     UINT32 nameLen = STRLEN(normalName);
     volatile SIZE_T onDataChannelCount = 0;
+    RtcDataChannelInit rtcDataChannelInit;
 
     MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    MEMSET(&rtcDataChannelInit, 0x00, SIZEOF(RtcDataChannelInit));
+    rtcDataChannelInit.ordered = FALSE;
+    NULLABLE_SET_EMPTY(rtcDataChannelInit.maxPacketLifeTime);
+    NULLABLE_SET_VALUE(rtcDataChannelInit.maxRetransmits, 3);
 
     EXPECT_EQ(createPeerConnection(&configuration, &pPeerConnection), STATUS_SUCCESS);
     pKvsPeerConnection = (PKvsPeerConnection) pPeerConnection;
@@ -876,7 +894,7 @@ TEST_F(DataChannelFunctionalityTest, dataChannelOpen_NormalNameIsPreserved)
 
     EXPECT_EQ(peerConnectionOnDataChannel(pPeerConnection, (UINT64) &onDataChannelCount, onDataChannelCb), STATUS_SUCCESS);
 
-    onSctpSessionDataChannelOpen((UINT64) pKvsPeerConnection, 0, (PBYTE) normalName, nameLen);
+    onSctpSessionDataChannelOpen((UINT64) pKvsPeerConnection, 0, (PBYTE) normalName, nameLen, &rtcDataChannelInit);
 
     EXPECT_EQ(ATOMIC_LOAD(&onDataChannelCount), 1);
 
@@ -887,6 +905,9 @@ TEST_F(DataChannelFunctionalityTest, dataChannelOpen_NormalNameIsPreserved)
     EXPECT_EQ(STRLEN(pKvsDataChannel->dataChannel.name), nameLen);
     EXPECT_EQ(STRNCMP(pKvsDataChannel->dataChannel.name, normalName, nameLen), 0);
     EXPECT_EQ(STRNCMP(pKvsDataChannel->rtcDataChannelDiagnostics.label, normalName, nameLen), 0);
+    EXPECT_EQ(pKvsDataChannel->rtcDataChannelInit.ordered, FALSE);
+    EXPECT_EQ(pKvsDataChannel->rtcDataChannelInit.maxRetransmits.isNull, FALSE);
+    EXPECT_EQ(pKvsDataChannel->rtcDataChannelInit.maxRetransmits.value, 3);
 
     freePeerConnection(&pPeerConnection);
 }

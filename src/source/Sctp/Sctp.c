@@ -280,28 +280,30 @@ CleanUp:
     return retStatus;
 }
 
-STATUS sctpSessionWriteMessage(PSctpSession pSctpSession, UINT32 streamId, BOOL isBinary, PBYTE pMessage, UINT32 pMessageLen)
+STATUS sctpSessionWriteMessage(PSctpSession pSctpSession, UINT32 streamId, BOOL isBinary, PBYTE pMessage, UINT32 pMessageLen,
+                               PRtcDataChannelInit pRtcDataChannelInit)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
 
-    CHK(pSctpSession != NULL && pMessage != NULL, STATUS_NULL_ARG);
+    CHK(pSctpSession != NULL && pMessage != NULL && pRtcDataChannelInit != NULL, STATUS_NULL_ARG);
 
     MEMSET(&pSctpSession->spa, 0x00, SIZEOF(struct sctp_sendv_spa));
 
     pSctpSession->spa.sendv_flags |= SCTP_SEND_SNDINFO_VALID;
     pSctpSession->spa.sendv_sndinfo.snd_sid = streamId;
 
-    if ((pSctpSession->packet[1] & DCEP_DATA_CHANNEL_RELIABLE_UNORDERED) != 0) {
+    if (!pRtcDataChannelInit->ordered) {
         pSctpSession->spa.sendv_sndinfo.snd_flags |= SCTP_UNORDERED;
     }
-    if ((pSctpSession->packet[1] & DCEP_DATA_CHANNEL_REXMIT) != 0) {
+    if (pRtcDataChannelInit->maxRetransmits.isNull == FALSE) {
+        pSctpSession->spa.sendv_flags |= SCTP_SEND_PRINFO_VALID;
         pSctpSession->spa.sendv_prinfo.pr_policy = SCTP_PR_SCTP_RTX;
-        pSctpSession->spa.sendv_prinfo.pr_value = getUnalignedInt32BigEndian((PINT32) (pSctpSession->packet + SIZEOF(UINT32)));
-    }
-    if ((pSctpSession->packet[1] & DCEP_DATA_CHANNEL_TIMED) != 0) {
+        pSctpSession->spa.sendv_prinfo.pr_value = pRtcDataChannelInit->maxRetransmits.value;
+    } else if (pRtcDataChannelInit->maxPacketLifeTime.isNull == FALSE) {
+        pSctpSession->spa.sendv_flags |= SCTP_SEND_PRINFO_VALID;
         pSctpSession->spa.sendv_prinfo.pr_policy = SCTP_PR_SCTP_TTL;
-        pSctpSession->spa.sendv_prinfo.pr_value = getUnalignedInt32BigEndian((PINT32) (pSctpSession->packet + SIZEOF(UINT32)));
+        pSctpSession->spa.sendv_prinfo.pr_value = pRtcDataChannelInit->maxPacketLifeTime.value;
     }
 
     putInt32((PINT32) &pSctpSession->spa.sendv_sndinfo.snd_ppid, isBinary ? SCTP_PPID_BINARY : SCTP_PPID_STRING);
@@ -450,6 +452,9 @@ STATUS handleDcepPacket(PSctpSession pSctpSession, UINT32 streamId, PBYTE data, 
     STATUS retStatus = STATUS_SUCCESS;
     UINT16 labelLength = 0;
     UINT16 protocolLength = 0;
+    UINT32 reliabilityParameter = 0;
+    BYTE reliabilityType = 0;
+    RtcDataChannelInit rtcDataChannelInit;
     struct sctp_sendv_spa ackSpa;
     BYTE ackPacket = DCEP_DATA_CHANNEL_ACK;
 
@@ -467,6 +472,22 @@ STATUS handleDcepPacket(PSctpSession pSctpSession, UINT32 streamId, PBYTE data, 
 
     CHK(SCTP_MAX_ALLOWABLE_PACKET_LENGTH >= length, STATUS_SCTP_INVALID_DCEP_PACKET);
 
+    MEMSET(&rtcDataChannelInit, 0x00, SIZEOF(RtcDataChannelInit));
+    rtcDataChannelInit.ordered = (data[1] & DCEP_DATA_CHANNEL_RELIABLE_UNORDERED) == 0;
+    NULLABLE_SET_EMPTY(rtcDataChannelInit.maxPacketLifeTime);
+    NULLABLE_SET_EMPTY(rtcDataChannelInit.maxRetransmits);
+    reliabilityType = data[1] & ~DCEP_DATA_CHANNEL_RELIABLE_UNORDERED;
+    CHK(reliabilityType == DCEP_DATA_CHANNEL_RELIABLE_ORDERED || reliabilityType == DCEP_DATA_CHANNEL_REXMIT ||
+            reliabilityType == DCEP_DATA_CHANNEL_TIMED,
+        STATUS_SCTP_INVALID_DCEP_PACKET);
+    reliabilityParameter = getUnalignedInt32BigEndian((PINT32) (data + SIZEOF(UINT32)));
+    reliabilityParameter = reliabilityParameter > MAX_UINT16 ? MAX_UINT16 : reliabilityParameter;
+    if (reliabilityType == DCEP_DATA_CHANNEL_REXMIT) {
+        NULLABLE_SET_VALUE(rtcDataChannelInit.maxRetransmits, (UINT16) reliabilityParameter);
+    } else if (reliabilityType == DCEP_DATA_CHANNEL_TIMED) {
+        NULLABLE_SET_VALUE(rtcDataChannelInit.maxPacketLifeTime, (UINT16) reliabilityParameter);
+    }
+
     // Send DATA_CHANNEL_ACK (RFC 8832 Section 5.2) back on the same stream
     // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_ack-message
     //   0                   1                   2                   3
@@ -483,7 +504,7 @@ STATUS handleDcepPacket(PSctpSession pSctpSession, UINT32 streamId, PBYTE data, 
     CHK(usrsctp_sendv(pSctpSession->socket, &ackPacket, 1, NULL, 0, &ackSpa, SIZEOF(ackSpa), SCTP_SENDV_SPA, 0) > 0, STATUS_SCTP_SENDV_FAILED);
 
     pSctpSession->sctpSessionCallbacks.dataChannelOpenFunc(pSctpSession->sctpSessionCallbacks.customData, streamId, data + SCTP_DCEP_HEADER_LENGTH,
-                                                           labelLength);
+                                                           labelLength, &rtcDataChannelInit);
 
 CleanUp:
 

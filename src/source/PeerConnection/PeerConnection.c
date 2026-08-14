@@ -635,14 +635,14 @@ CleanUp:
     LEAVES();
 }
 
-VOID onSctpSessionDataChannelOpen(UINT64 customData, UINT32 channelId, PBYTE pName, UINT32 nameLen)
+VOID onSctpSessionDataChannelOpen(UINT64 customData, UINT32 channelId, PBYTE pName, UINT32 nameLen, PRtcDataChannelInit pRtcDataChannelInit)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
     PKvsDataChannel pKvsDataChannel = NULL;
 
-    CHK(pKvsPeerConnection != NULL && pKvsPeerConnection->onDataChannel != NULL, STATUS_NULL_ARG);
+    CHK(pKvsPeerConnection != NULL && pKvsPeerConnection->onDataChannel != NULL && pRtcDataChannelInit != NULL, STATUS_NULL_ARG);
     CHK(nameLen <= MAX_DATA_CHANNEL_NAME_LEN, STATUS_INVALID_ARG);
 
     pKvsDataChannel = (PKvsDataChannel) MEMCALLOC(1, SIZEOF(KvsDataChannel));
@@ -652,6 +652,7 @@ VOID onSctpSessionDataChannelOpen(UINT64 customData, UINT32 channelId, PBYTE pNa
     pKvsDataChannel->dataChannel.id = channelId;
     pKvsDataChannel->pRtcPeerConnection = (PRtcPeerConnection) pKvsPeerConnection;
     pKvsDataChannel->channelId = channelId;
+    pKvsDataChannel->rtcDataChannelInit = *pRtcDataChannelInit;
 
     pKvsDataChannel->rtcDataChannelDiagnostics.dataChannelIdentifier = channelId;
     pKvsDataChannel->rtcDataChannelDiagnostics.state = RTC_DATA_CHANNEL_STATE_OPEN;
