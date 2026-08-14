@@ -85,9 +85,6 @@ typedef struct {
 typedef struct {
     volatile SIZE_T shutdownStatus;
     struct socket* socket;
-    struct sctp_sendv_spa spa;
-    BYTE packet[SCTP_MAX_ALLOWABLE_PACKET_LENGTH];
-    UINT32 packetSize;
     SctpSessionCallbacks sctpSessionCallbacks;
     TIMER_QUEUE_HANDLE timerQueueHandle;
     UINT32 timerTaskId;
