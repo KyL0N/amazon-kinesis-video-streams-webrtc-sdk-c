@@ -34,7 +34,9 @@ STATUS createDataChannel(PRtcPeerConnection pPeerConnection, PCHAR pDataChannelN
         NULLABLE_SET_EMPTY(pKvsDataChannel->rtcDataChannelInit.maxPacketLifeTime);
         NULLABLE_SET_EMPTY(pKvsDataChannel->rtcDataChannelInit.maxRetransmits);
     }
-    STRNCPY(pKvsDataChannel->rtcDataChannelDiagnostics.label, pKvsDataChannel->dataChannel.name, STRLEN(pKvsDataChannel->dataChannel.name));
+    STRNCPY(pKvsDataChannel->rtcDataChannelDiagnostics.label, pKvsDataChannel->dataChannel.name,
+            ARRAY_SIZE(pKvsDataChannel->rtcDataChannelDiagnostics.label) - 1);
+    pKvsDataChannel->rtcDataChannelDiagnostics.label[ARRAY_SIZE(pKvsDataChannel->rtcDataChannelDiagnostics.label) - 1] = '\0';
     pKvsDataChannel->rtcDataChannelDiagnostics.state = RTC_DATA_CHANNEL_STATE_CONNECTING;
     CHK_STATUS(hashTableGetCount(pKvsPeerConnection->pDataChannels, &channelId));
     pKvsDataChannel->rtcDataChannelDiagnostics.dataChannelIdentifier = channelId;

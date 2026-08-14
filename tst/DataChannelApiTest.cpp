@@ -32,6 +32,29 @@ TEST_F(DataChannelApiTest, createDataChannel_Disconnected)
     freePeerConnection(&pPeerConnection);
 }
 
+TEST_F(DataChannelApiTest, createDataChannel_MaxLengthLabelIsNullTerminatedInStats)
+{
+    RtcConfiguration configuration{};
+    PRtcPeerConnection pPeerConnection = nullptr;
+    PRtcDataChannel pDataChannel = nullptr;
+    RtcStats metrics{};
+    CHAR name[MAX_DATA_CHANNEL_NAME_LEN + 1];
+
+    MEMSET(name, 'x', MAX_DATA_CHANNEL_NAME_LEN);
+    name[MAX_DATA_CHANNEL_NAME_LEN] = '\0';
+
+    EXPECT_EQ(createPeerConnection(&configuration, &pPeerConnection), STATUS_SUCCESS);
+    EXPECT_EQ(createDataChannel(pPeerConnection, name, nullptr, &pDataChannel), STATUS_SUCCESS);
+
+    metrics.requestedTypeOfStats = RTC_STATS_TYPE_DATA_CHANNEL;
+    metrics.rtcStatsObject.rtcDataChannelStats.dataChannelIdentifier = pDataChannel->id;
+    EXPECT_EQ(rtcPeerConnectionGetMetrics(pPeerConnection, nullptr, &metrics), STATUS_SUCCESS);
+    EXPECT_STREQ(metrics.rtcStatsObject.rtcDataChannelStats.label, name);
+
+    closePeerConnection(pPeerConnection);
+    freePeerConnection(&pPeerConnection);
+}
+
 TEST_F(DataChannelApiTest, handleDcepPacket_RejectsOversizedLabelLength)
 {
     /** Construct a minimal DCEP DataChannelOpen packet (13 bytes total):
