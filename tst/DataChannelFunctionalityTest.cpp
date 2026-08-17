@@ -83,6 +83,9 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_Disconnected)
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
 
+    ASSERT_EQ(pOfferDataChannel->id, ((PKvsDataChannel) pOfferDataChannel)->channelId);
+    ASSERT_EQ(pAnswerDataChannel->id, ((PKvsDataChannel) pAnswerDataChannel)->channelId);
+
     closePeerConnection(offerPc);
     closePeerConnection(answerPc);
     freePeerConnection(&offerPc);

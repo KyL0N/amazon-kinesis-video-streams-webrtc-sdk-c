@@ -93,6 +93,11 @@ STATUS allocateSctpSortDataChannelsDataCallback(UINT64 customData, PHashEntry pH
     CHK(customData != 0, STATUS_NULL_ARG);
 
     pKvsDataChannel->channelId = data->currentDataChannelId;
+    /* The public id is the SCTP stream id after DTLS role parity is known.
+     * Keeping the pre-allocation ordinal here makes SCTP notifications
+     * impossible to map back to their RtcDataChannel. */
+    pKvsDataChannel->dataChannel.id = data->currentDataChannelId;
+    pKvsDataChannel->rtcDataChannelDiagnostics.dataChannelIdentifier = data->currentDataChannelId;
     CHK_STATUS(hashTablePut(data->pKvsPeerConnection->pDataChannels, pKvsDataChannel->channelId, (UINT64) pKvsDataChannel));
 
     data->currentDataChannelId += 2;
