@@ -24,6 +24,47 @@ option(BUILD_WEBSOCKETS "Build libwebsockets from source" ${BUILD_DEPENDENCIES})
 option(BUILD_SRTP "Build libsrtp from source" ${BUILD_DEPENDENCIES})
 option(USE_LIBSRTP3 "Build/link against libsrtp 3.x (default: 2.x). Required for mbedTLS 4." OFF)
 option(BUILD_USRSCTP "Build libusrsctp from source" ${BUILD_DEPENDENCIES})
+set(KVS_USRSCTP_GIT_REPOSITORY "https://github.com/sctplab/usrsctp.git" CACHE STRING
+    "Git repository used when building usrsctp from source")
+set(KVS_USRSCTP_GIT_TAG "1ade45cbadfd19298d2c47dc538962d4425ad2dd" CACHE STRING
+    "Exact usrsctp revision used when building from Git")
+set(KVS_USRSCTP_SOURCE_DIR "" CACHE PATH
+    "Optional existing usrsctp source tree; overrides repository and revision")
+
+find_package(Git QUIET)
+if(KVS_USRSCTP_SOURCE_DIR)
+  if(NOT EXISTS "${KVS_USRSCTP_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "KVS_USRSCTP_SOURCE_DIR does not contain CMakeLists.txt: ${KVS_USRSCTP_SOURCE_DIR}")
+  endif()
+  set(KVS_USRSCTP_SOURCE_KIND "source-dir")
+  set(KVS_USRSCTP_RESOLVED_REVISION "unversioned")
+  if(GIT_FOUND)
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+      WORKING_DIRECTORY "${KVS_USRSCTP_SOURCE_DIR}"
+      RESULT_VARIABLE KVS_USRSCTP_REVISION_RESULT
+      OUTPUT_VARIABLE KVS_USRSCTP_REVISION_OUTPUT
+      ERROR_QUIET
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(KVS_USRSCTP_REVISION_RESULT EQUAL 0 AND NOT KVS_USRSCTP_REVISION_OUTPUT STREQUAL "")
+      set(KVS_USRSCTP_RESOLVED_REVISION "${KVS_USRSCTP_REVISION_OUTPUT}")
+    endif()
+  endif()
+  set(KVS_USRSCTP_SOURCE_VALUE "${KVS_USRSCTP_SOURCE_DIR}")
+else()
+  if(KVS_USRSCTP_GIT_REPOSITORY STREQUAL "" OR KVS_USRSCTP_GIT_TAG STREQUAL "")
+    message(FATAL_ERROR "KVS_USRSCTP_GIT_REPOSITORY and KVS_USRSCTP_GIT_TAG must be non-empty")
+  endif()
+  set(KVS_USRSCTP_SOURCE_KIND "git")
+  set(KVS_USRSCTP_SOURCE_VALUE "${KVS_USRSCTP_GIT_REPOSITORY}")
+  set(KVS_USRSCTP_RESOLVED_REVISION "${KVS_USRSCTP_GIT_TAG}")
+endif()
+
+file(WRITE "${CMAKE_BINARY_DIR}/usrsctp-selection.txt"
+  "source_kind=${KVS_USRSCTP_SOURCE_KIND}\n"
+  "source=${KVS_USRSCTP_SOURCE_VALUE}\n"
+  "revision=${KVS_USRSCTP_RESOLVED_REVISION}\n")
+message(STATUS "usrsctp selection: ${KVS_USRSCTP_SOURCE_KIND} ${KVS_USRSCTP_RESOLVED_REVISION}")
 
 option(BUILD_OPENSSL_PLATFORM "If buildng OpenSSL what is the target platform" OFF)
 option(BUILD_LIBSRTP_HOST_PLATFORM "If buildng LibSRTP what is the current platform" OFF)
@@ -356,10 +397,31 @@ if(BUILD_DEPENDENCIES OR BUILD_WEBSOCKETS OR BUILD_SRTP OR BUILD_USRSCTP)
 
   if(BUILD_USRSCTP)
     message(STATUS "Building libusrsctp from source")
+    set(KVS_USRSCTP_SELECTION_FINGERPRINT
+        "${KVS_USRSCTP_SOURCE_KIND}|${KVS_USRSCTP_SOURCE_VALUE}|${KVS_USRSCTP_RESOLVED_REVISION}")
+    set(KVS_USRSCTP_INSTALLED_SELECTION_FILE "${OPEN_SRC_INSTALL_PREFIX}/usrsctp-selection.txt")
+    set(KVS_USRSCTP_INSTALLED_SELECTION "")
+    if(EXISTS "${KVS_USRSCTP_INSTALLED_SELECTION_FILE}")
+      file(READ "${KVS_USRSCTP_INSTALLED_SELECTION_FILE}" KVS_USRSCTP_INSTALLED_SELECTION)
+      string(STRIP "${KVS_USRSCTP_INSTALLED_SELECTION}" KVS_USRSCTP_INSTALLED_SELECTION)
+    endif()
+    if(NOT KVS_USRSCTP_INSTALLED_SELECTION STREQUAL KVS_USRSCTP_SELECTION_FINGERPRINT)
+      message(STATUS "usrsctp selection changed; invalidating the installed dependency")
+      file(REMOVE
+        "${OPEN_SRC_INSTALL_PREFIX}/lib/libusrsctp.a"
+        "${OPEN_SRC_INSTALL_PREFIX}/lib/libusrsctp.so"
+        "${OPEN_SRC_INSTALL_PREFIX}/lib64/libusrsctp.a"
+        "${OPEN_SRC_INSTALL_PREFIX}/lib64/libusrsctp.so"
+        "${OPEN_SRC_INSTALL_PREFIX}/include/usrsctp.h")
+    endif()
     set(BUILD_ARGS
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
+        -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
+        -DKVS_USRSCTP_GIT_REPOSITORY=${KVS_USRSCTP_GIT_REPOSITORY}
+        -DKVS_USRSCTP_GIT_TAG=${KVS_USRSCTP_GIT_TAG}
+        -DKVS_USRSCTP_SOURCE_DIR=${KVS_USRSCTP_SOURCE_DIR})
     build_dependency(usrsctp ${BUILD_ARGS})
+    file(WRITE "${KVS_USRSCTP_INSTALLED_SELECTION_FILE}" "${KVS_USRSCTP_SELECTION_FINGERPRINT}\n")
   endif()
   message(STATUS "Finished building dependencies.")
 endif()
