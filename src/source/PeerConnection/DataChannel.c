@@ -70,6 +70,10 @@ STATUS dataChannelSend(PRtcDataChannel pRtcDataChannel, BOOL isBinary, PBYTE pMe
     pKvsPeerConnection = (PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection;
     pSctpSession = pKvsPeerConnection->pSctpSession;
 
+    // This association-wide batch scope is also the public DataChannel write
+    // gate. Concurrent callers are serialized before entering usrsctp, while
+    // the call-local sendv metadata in sctpSessionWriteMessage keeps stream and
+    // partial-reliability fields isolated.
     CHK_STATUS(transportPacketBatchBegin(pKvsPeerConnection->pTransportPacketBatch));
     transportBatchActive = TRUE;
     CHK_STATUS(sctpSessionWriteMessage(pSctpSession, pKvsDataChannel->channelId, isBinary, pMessage, pMessageLen,

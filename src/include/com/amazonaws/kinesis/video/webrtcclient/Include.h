@@ -1238,8 +1238,9 @@ typedef enum {
 
 /**
  * Process-wide usrsctp settings. Call configureKvsSctpGlobal before initKvsWebRtc.
- * A zero timer interval preserves the SDK default of 100 ms. Zero send/receive
- * space values preserve the usrsctp defaults.
+ * A zero timer interval preserves the SDK timer-queue default of 100 ms, or
+ * resolves to usrsctp's fixed 10 ms cadence when useInternalTimerThread is
+ * true. Zero send/receive space values preserve the usrsctp defaults.
  */
 typedef struct {
     UINT32 version;
@@ -1247,6 +1248,7 @@ typedef struct {
     UINT32 sendSpaceBytes;
     UINT32 receiveSpaceBytes;
     BOOL enableEcn;
+    BOOL useInternalTimerThread;
 } RtcSctpGlobalConfiguration, *PRtcSctpGlobalConfiguration;
 
 /**
@@ -1296,6 +1298,7 @@ typedef struct {
 typedef struct {
     UINT32 version;
     UINT32 timerIntervalMs;
+    BOOL internalTimerThread;
     UINT32 associationState;
     UINT32 peerReceiverWindowBytes;
     UINT32 congestionWindowBytes;

@@ -43,6 +43,7 @@ extern "C" {
 #define DEFAULT_USRSCTP_TEARDOWN_POLLING_INTERVAL (10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
 
 #define SCTP_TIMER_INTERVAL_MS_DEFAULT 100
+#define SCTP_INTERNAL_TIMER_INTERVAL_MS 10
 
 #define SCTP_DEFAULT_OUTBOUND_STREAMS 300
 #define SCTP_DEFAULT_INBOUND_STREAMS  300
@@ -127,6 +128,7 @@ typedef struct {
     UINT32 timerTaskId;
     UINT32 writableThresholdBytes;
     UINT64 timerInterval;
+    BOOL internalTimerThread;
 } SctpSession, *PSctpSession;
 
 STATUS initSctpSession();
@@ -134,6 +136,8 @@ VOID deinitSctpSession();
 STATUS createSctpSession(PSctpSessionCallbacks, PRtcSctpConfiguration, TIMER_QUEUE_HANDLE, PSctpSession*);
 STATUS freeSctpSession(PSctpSession*);
 STATUS putSctpPacket(PSctpSession, PBYTE, UINT32);
+// Internal primitive. Application writes enter through dataChannelSend(),
+// whose association-wide transport batch scope is the single-writer gate.
 STATUS sctpSessionWriteMessage(PSctpSession, UINT32, BOOL, PBYTE, UINT32, PRtcDataChannelInit);
 STATUS sctpSessionWriteDcep(PSctpSession, UINT32, PCHAR, UINT32, PRtcDataChannelInit);
 STATUS handleDcepPacket(PSctpSession, UINT32, PBYTE, SIZE_T);

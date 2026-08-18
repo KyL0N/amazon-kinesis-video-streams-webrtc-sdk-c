@@ -27,7 +27,8 @@ STATUS getKvsSctpGlobalConfiguration(PRtcSctpGlobalConfiguration pConfiguration)
     *pConfiguration = pSctpContext->configuration;
     pConfiguration->version = RTC_SCTP_GLOBAL_CONFIGURATION_CURRENT_VERSION;
     if (pConfiguration->timerIntervalMs == 0) {
-        pConfiguration->timerIntervalMs = SCTP_TIMER_INTERVAL_MS_DEFAULT;
+        pConfiguration->timerIntervalMs =
+            pConfiguration->useInternalTimerThread ? SCTP_INTERNAL_TIMER_INTERVAL_MS : SCTP_TIMER_INTERVAL_MS_DEFAULT;
     }
 
 CleanUp:
@@ -45,6 +46,9 @@ STATUS configureKvsSctpGlobal(PRtcSctpGlobalConfiguration pConfiguration)
     CHK(pConfiguration != NULL, STATUS_NULL_ARG);
     CHK(pConfiguration->version <= RTC_SCTP_GLOBAL_CONFIGURATION_CURRENT_VERSION, STATUS_SCTP_CONFIGURATION_INVALID);
     CHK(pConfiguration->timerIntervalMs <= 1000, STATUS_SCTP_CONFIGURATION_INVALID);
+    CHK(!pConfiguration->useInternalTimerThread || pConfiguration->timerIntervalMs == 0 ||
+            pConfiguration->timerIntervalMs == SCTP_INTERNAL_TIMER_INTERVAL_MS,
+        STATUS_SCTP_CONFIGURATION_INVALID);
 
     pSctpContext = acquireSctpContext();
     CHK(!ATOMIC_LOAD_BOOL(&pSctpContext->isSctpInitialized), STATUS_INVALID_OPERATION);
@@ -301,9 +305,15 @@ STATUS initSctpSession()
     STATUS retStatus = STATUS_SUCCESS;
     RtcSctpGlobalConfiguration configuration;
 
-    usrsctp_init_nothreads(0, &onSctpOutboundPacket, NULL);
-
     CHK_STATUS(getKvsSctpGlobalConfiguration(&configuration));
+    if (configuration.useInternalTimerThread) {
+        // usrsctp owns one process-wide 10 ms timer thread, independent of the
+        // number and lifetime of PeerConnections.
+        usrsctp_init(0, &onSctpOutboundPacket, NULL);
+    } else {
+        // Compatibility path: the SDK timer queue drives usrsctp explicitly.
+        usrsctp_init_nothreads(0, &onSctpOutboundPacket, NULL);
+    }
     CHK(usrsctp_sysctl_set_sctp_ecn_enable(configuration.enableEcn ? 1 : 0) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
     if (configuration.sendSpaceBytes != 0) {
         CHK(usrsctp_sysctl_set_sctp_sendspace(configuration.sendSpaceBytes) == 0, STATUS_SCTP_CONFIGURATION_INVALID);
@@ -368,13 +378,16 @@ STATUS createSctpSession(PSctpSessionCallbacks pSctpSessionCallbacks, PRtcSctpCo
     pSctpSession->writableThresholdBytes =
         pSctpSessionCallbacks->writableFunc == NULL ? 0 : (configuration.writableThresholdBytes == 0 ? 1 : configuration.writableThresholdBytes);
     pSctpSession->timerInterval = globalConfiguration.timerIntervalMs * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    pSctpSession->internalTimerThread = globalConfiguration.useInternalTimerThread;
 
     CHK_STATUS(initSctpAddrConn(pSctpSession, &localConn));
     CHK_STATUS(initSctpAddrConn(pSctpSession, &remoteConn));
 
-    // call the timer callback now to reset the last tick time for this session while ensuring that other sessions'
-    // queued timer tasks are correctly advanced
-    sctpTimerCallback(0, GETTIME(), (UINT64) pSctpSession);
+    if (!pSctpSession->internalTimerThread) {
+        // Reset the shared elapsed-time origin before this session registers
+        // the compatibility timer task.
+        sctpTimerCallback(0, GETTIME(), (UINT64) pSctpSession);
+    }
 
     CHK((pSctpSession->socket = usrsctp_socket(AF_CONN, SOCK_STREAM, IPPROTO_SCTP, onSctpInboundPacket,
                                                pSctpSessionCallbacks->writableFunc == NULL ? NULL : onSctpSendBufferAvailable,
@@ -401,9 +414,11 @@ STATUS createSctpSession(PSctpSessionCallbacks pSctpSessionCallbacks, PRtcSctpCo
     CHK(usrsctp_setsockopt(pSctpSession->socket, IPPROTO_SCTP, SCTP_ASSOCINFO, &assocParams, SIZEOF(assocParams)) == 0,
         STATUS_SCTP_SESSION_SETUP_FAILED);
 
-    pSctpSession->timerQueueHandle = timerQueueHandle;
-    CHK_STATUS(timerQueueAddTimer(pSctpSession->timerQueueHandle, pSctpSession->timerInterval, pSctpSession->timerInterval, sctpTimerCallback,
-                                  (UINT64) pSctpSession, &pSctpSession->timerTaskId));
+    if (!pSctpSession->internalTimerThread) {
+        pSctpSession->timerQueueHandle = timerQueueHandle;
+        CHK_STATUS(timerQueueAddTimer(pSctpSession->timerQueueHandle, pSctpSession->timerInterval, pSctpSession->timerInterval,
+                                      sctpTimerCallback, (UINT64) pSctpSession, &pSctpSession->timerTaskId));
+    }
 
 CleanUp:
     if (STATUS_FAILED(retStatus)) {
@@ -430,7 +445,7 @@ STATUS freeSctpSession(PSctpSession* ppSctpSession)
     CHK(pSctpSession != NULL, retStatus);
 
     // Cancel the periodic timer before shutting down the socket
-    if (IS_VALID_TIMER_QUEUE_HANDLE(pSctpSession->timerQueueHandle)) {
+    if (!pSctpSession->internalTimerThread && IS_VALID_TIMER_QUEUE_HANDLE(pSctpSession->timerQueueHandle)) {
         timerQueueCancelTimer(pSctpSession->timerQueueHandle, pSctpSession->timerTaskId, (UINT64) pSctpSession);
     }
 
@@ -837,6 +852,7 @@ STATUS sctpSessionGetMetrics(PSctpSession pSctpSession, PRtcSctpMetrics pMetrics
     MEMSET(pMetrics, 0, SIZEOF(*pMetrics));
     pMetrics->version = RTC_SCTP_METRICS_CURRENT_VERSION;
     pMetrics->timerIntervalMs = (UINT32) (pSctpSession->timerInterval / HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    pMetrics->internalTimerThread = pSctpSession->internalTimerThread;
 
     optionLength = SIZEOF(socketBufferSize);
     CHK(usrsctp_getsockopt(pSctpSession->socket, SOL_SOCKET, SO_SNDBUF, &socketBufferSize, &optionLength) == 0, STATUS_SCTP_GET_METRICS_FAILED);
