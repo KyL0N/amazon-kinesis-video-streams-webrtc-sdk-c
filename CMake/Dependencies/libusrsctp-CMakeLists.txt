@@ -4,6 +4,16 @@ project(libusrsctp-download NONE)
 
 include(ExternalProject)
 
+# The frozen 2021 baseline still declares compatibility with CMake 2.8. CMake
+# 4 removes that compatibility mode before the dependency can configure. Keep
+# the source revision unchanged and opt the child build into the oldest policy
+# level CMake 4 still accepts. Older CMake versions used by the ARM targets do
+# not need or understand this cache variable.
+set(USRSCTP_CMAKE_POLICY_ARGS "")
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
+    list(APPEND USRSCTP_CMAKE_POLICY_ARGS -DCMAKE_POLICY_VERSION_MINIMUM=3.5)
+endif()
+
 if(KVS_USRSCTP_SOURCE_DIR)
     set(USRSCTP_DOWNLOAD_ARGS
         SOURCE_DIR       "${KVS_USRSCTP_SOURCE_DIR}"
@@ -30,6 +40,7 @@ ExternalProject_Add(project_libusrsctp
                       "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS} -fPIC"
                       -Dsctp_werror=0
                       -Dsctp_build_programs=0
+                      ${USRSCTP_CMAKE_POLICY_ARGS}
     BUILD_ALWAYS      TRUE
     TEST_COMMAND      ""
 )
