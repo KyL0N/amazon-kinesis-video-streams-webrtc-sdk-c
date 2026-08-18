@@ -500,8 +500,10 @@ PVOID connectionListenerReceiveDataRoutine(PVOID arg)
 
 CleanUp:
 
-    DLOGI("UDP receive summary: packets=%" PRIu64 ", syscalls=%" PRIu64 ", largestBatch=%u", pConnectionListener->udpPacketsReceived,
-          pConnectionListener->udpReceiveCalls, pConnectionListener->udpLargestBatch);
+    if (pConnectionListener != NULL) {
+        DLOGI("UDP receive summary: packets=%" PRIu64 ", syscalls=%" PRIu64 ", largestBatch=%u", pConnectionListener->udpPacketsReceived,
+              pConnectionListener->udpReceiveCalls, pConnectionListener->udpLargestBatch);
+    }
 
     CHK_LOG_ERR(retStatus);
 

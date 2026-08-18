@@ -21,7 +21,7 @@ typedef struct {
     BYTE packets[TRANSPORT_PACKET_BATCH_CAPACITY][TRANSPORT_PACKET_BATCH_DATAGRAM_SIZE];
     UINT64 queuedPackets;
     UINT64 batchFlushes;
-    UINT64 singlePacketFallbacks;
+    volatile SIZE_T singlePacketFallbacks;
     UINT32 largestBatch;
 } TransportPacketBatch, *PTransportPacketBatch;
 
