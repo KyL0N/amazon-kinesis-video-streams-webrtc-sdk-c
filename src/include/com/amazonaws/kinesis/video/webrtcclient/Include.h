@@ -1272,6 +1272,8 @@ typedef struct {
     RTC_SCTP_CONGESTION_CONTROL congestionControl;
     RTC_SCTP_STREAM_SCHEDULER streamScheduler;
     UINT32 notificationEventMask;
+    UINT32 delayedSackMs;
+    UINT32 sackFrequency;
 } RtcSctpConfiguration, *PRtcSctpConfiguration;
 
 /**
@@ -1312,6 +1314,8 @@ typedef struct {
     UINT16 outboundStreams;
     UINT16 pathMaxRetransmits;
     UINT16 associationMaxRetransmits;
+    UINT32 delayedSackMs;
+    UINT32 sackFrequency;
     BOOL messageInterleaving;
     RTC_SCTP_CONGESTION_CONTROL congestionControl;
     RTC_SCTP_STREAM_SCHEDULER streamScheduler;

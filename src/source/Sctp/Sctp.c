@@ -152,6 +152,7 @@ STATUS configureSctpSocket(struct socket* socket, PRtcSctpConfiguration pConfigu
     UINT32 notificationEventMask;
     INT32 socketBufferSize;
     struct sctp_assoc_value associationValue;
+    struct sctp_sack_info sackInfo;
     UINT16 eventTypes[] = {SCTP_ASSOC_CHANGE,   SCTP_PEER_ADDR_CHANGE,      SCTP_REMOTE_ERROR,
                            SCTP_SHUTDOWN_EVENT, SCTP_ADAPTATION_INDICATION, SCTP_PARTIAL_DELIVERY_EVENT};
     UINT16 extendedEventTypes[] = {SCTP_STREAM_RESET_EVENT, SCTP_SENDER_DRY_EVENT, SCTP_SEND_FAILED_EVENT};
@@ -180,6 +181,15 @@ STATUS configureSctpSocket(struct socket* socket, PRtcSctpConfiguration pConfigu
         CHK(pConfiguration->receiveBufferBytes <= 0x7fffffffU, STATUS_SCTP_CONFIGURATION_INVALID);
         socketBufferSize = (INT32) pConfiguration->receiveBufferBytes;
         CHK(usrsctp_setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &socketBufferSize, SIZEOF(socketBufferSize)) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
+    }
+
+    if (pConfiguration->delayedSackMs != 0 || pConfiguration->sackFrequency != 0) {
+        MEMSET(&sackInfo, 0, SIZEOF(sackInfo));
+        sackInfo.sack_assoc_id = SCTP_FUTURE_ASSOC;
+        sackInfo.sack_delay = pConfiguration->delayedSackMs;
+        sackInfo.sack_freq = pConfiguration->sackFrequency;
+        CHK(usrsctp_setsockopt(socket, IPPROTO_SCTP, SCTP_DELAYED_SACK, &sackInfo, SIZEOF(sackInfo)) == 0,
+            STATUS_SCTP_SESSION_SETUP_FAILED);
     }
 
     MEMSET(&event, 0, SIZEOF(event));
@@ -817,6 +827,7 @@ STATUS sctpSessionGetMetrics(PSctpSession pSctpSession, PRtcSctpMetrics pMetrics
     struct sctp_assocparams associationParams;
     struct sctp_paddrparams pathParams;
     struct sctp_assoc_value associationValue;
+    struct sctp_sack_info sackInfo;
     INT32 socketBufferSize = 0;
     INT32 events;
     socklen_t optionLength;
@@ -872,6 +883,14 @@ STATUS sctpSessionGetMetrics(PSctpSession pSctpSession, PRtcSctpMetrics pMetrics
     optionLength = SIZEOF(associationParams);
     if (usrsctp_getsockopt(pSctpSession->socket, IPPROTO_SCTP, SCTP_ASSOCINFO, &associationParams, &optionLength) == 0) {
         pMetrics->associationMaxRetransmits = associationParams.sasoc_asocmaxrxt;
+    }
+
+    MEMSET(&sackInfo, 0, SIZEOF(sackInfo));
+    sackInfo.sack_assoc_id = status.sstat_assoc_id;
+    optionLength = SIZEOF(sackInfo);
+    if (usrsctp_getsockopt(pSctpSession->socket, IPPROTO_SCTP, SCTP_DELAYED_SACK, &sackInfo, &optionLength) == 0) {
+        pMetrics->delayedSackMs = sackInfo.sack_delay;
+        pMetrics->sackFrequency = sackInfo.sack_freq;
     }
 
     MEMSET(&associationValue, 0, SIZEOF(associationValue));
