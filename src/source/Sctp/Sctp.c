@@ -176,6 +176,16 @@ STATUS configureSctpSocket(struct socket* socket, PRtcSctpConfiguration pConfigu
     // delays are introduced, at the cost of more packets in the network.
     CHK(usrsctp_setsockopt(socket, IPPROTO_SCTP, SCTP_NODELAY, &valueOn, SIZEOF(valueOn)) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
 
+    if (pConfiguration->enableZeroChecksum) {
+        // DataChannel SCTP is protected by DTLS. RFC 9653 still requires an
+        // explicit per-endpoint opt-in and peer negotiation before CRC32C may
+        // be omitted; setting this socket option does not force zero checksums.
+        UINT32 alternateErrorDetectionMethod = SCTP_EDMID_LOWER_LAYER_DTLS;
+        CHK(usrsctp_setsockopt(socket, IPPROTO_SCTP, SCTP_ACCEPT_ZERO_CHECKSUM, &alternateErrorDetectionMethod,
+                              SIZEOF(alternateErrorDetectionMethod)) == 0,
+            STATUS_SCTP_SESSION_SETUP_FAILED);
+    }
+
     if (pConfiguration->sendBufferBytes != 0) {
         CHK(pConfiguration->sendBufferBytes <= 0x7fffffffU, STATUS_SCTP_CONFIGURATION_INVALID);
         socketBufferSize = (INT32) pConfiguration->sendBufferBytes;
@@ -379,6 +389,8 @@ STATUS createSctpSession(PSctpSessionCallbacks pSctpSessionCallbacks, PRtcSctpCo
         pSctpSessionCallbacks->writableFunc == NULL ? 0 : (configuration.writableThresholdBytes == 0 ? 1 : configuration.writableThresholdBytes);
     pSctpSession->timerInterval = globalConfiguration.timerIntervalMs * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     pSctpSession->internalTimerThread = globalConfiguration.useInternalTimerThread;
+    pSctpSession->zeroChecksumRequested = configuration.enableZeroChecksum;
+    pSctpSession->zeroChecksumPacketMetrics = configuration.enableZeroChecksumPacketMetrics;
 
     CHK_STATUS(initSctpAddrConn(pSctpSession, &localConn));
     CHK_STATUS(initSctpAddrConn(pSctpSession, &remoteConn));
@@ -616,6 +628,15 @@ INT32 onSctpOutboundPacket(PVOID addr, PVOID data, ULONG length, UINT8 tos, UINT
         return -1;
     }
 
+    if (pSctpSession->zeroChecksumPacketMetrics) {
+        ATOMIC_INCREMENT(&pSctpSession->outboundSctpPackets);
+        if (length >= SCTP_COMMON_HEADER_LENGTH &&
+            ((PBYTE) data)[SCTP_CHECKSUM_OFFSET] == 0 && ((PBYTE) data)[SCTP_CHECKSUM_OFFSET + 1] == 0 &&
+            ((PBYTE) data)[SCTP_CHECKSUM_OFFSET + 2] == 0 && ((PBYTE) data)[SCTP_CHECKSUM_OFFSET + 3] == 0) {
+            ATOMIC_INCREMENT(&pSctpSession->outboundZeroChecksumPackets);
+        }
+    }
+
     pSctpSession->sctpSessionCallbacks.outboundPacketFunc(pSctpSession->sctpSessionCallbacks.customData, data, length);
 
     return 0;
@@ -626,8 +647,19 @@ STATUS putSctpPacket(PSctpSession pSctpSession, PBYTE buf, UINT32 bufLen)
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
 
+    CHK(pSctpSession != NULL && buf != NULL, STATUS_NULL_ARG);
+    if (pSctpSession->zeroChecksumPacketMetrics) {
+        ATOMIC_INCREMENT(&pSctpSession->inboundSctpPackets);
+        if (bufLen >= SCTP_COMMON_HEADER_LENGTH &&
+            buf[SCTP_CHECKSUM_OFFSET] == 0 && buf[SCTP_CHECKSUM_OFFSET + 1] == 0 &&
+            buf[SCTP_CHECKSUM_OFFSET + 2] == 0 && buf[SCTP_CHECKSUM_OFFSET + 3] == 0) {
+            ATOMIC_INCREMENT(&pSctpSession->inboundZeroChecksumPackets);
+        }
+    }
+
     usrsctp_conninput(pSctpSession, buf, bufLen, 0);
 
+CleanUp:
     LEAVES();
     return retStatus;
 }
@@ -973,6 +1005,12 @@ STATUS sctpSessionGetMetrics(PSctpSession pSctpSession, PRtcSctpMetrics pMetrics
     pMetrics->writableCallbacks = (UINT64) ATOMIC_LOAD(&pSctpSession->writableCallbacks);
     pMetrics->notifications = (UINT64) ATOMIC_LOAD(&pSctpSession->notifications);
     pMetrics->lastSendErrno = (INT32) ATOMIC_LOAD(&pSctpSession->lastSendErrno);
+    pMetrics->zeroChecksumRequested = pSctpSession->zeroChecksumRequested;
+    pMetrics->zeroChecksumPacketMetrics = pSctpSession->zeroChecksumPacketMetrics;
+    pMetrics->inboundSctpPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->inboundSctpPackets);
+    pMetrics->inboundZeroChecksumPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->inboundZeroChecksumPackets);
+    pMetrics->outboundSctpPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->outboundSctpPackets);
+    pMetrics->outboundZeroChecksumPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->outboundZeroChecksumPackets);
 
 CleanUp:
     CHK_LOG_ERR(retStatus);

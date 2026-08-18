@@ -1276,6 +1276,14 @@ typedef struct {
     UINT32 notificationEventMask;
     UINT32 delayedSackMs;
     UINT32 sackFrequency;
+    /**
+     * Advertise RFC 9653's DTLS alternate error-detection method. Zero-checksum
+     * packets are used only after the peer advertises the same method; otherwise
+     * the association continues to use CRC32C. Disabled by default.
+     */
+    BOOL enableZeroChecksum;
+    /** Enable per-packet diagnostic counters for zero-checksum A/B tests. */
+    BOOL enableZeroChecksumPacketMetrics;
 } RtcSctpConfiguration, *PRtcSctpConfiguration;
 
 /**
@@ -1332,6 +1340,12 @@ typedef struct {
     UINT64 writableCallbacks;
     UINT64 notifications;
     INT32 lastSendErrno;
+    BOOL zeroChecksumRequested;
+    BOOL zeroChecksumPacketMetrics;
+    UINT64 inboundSctpPackets;
+    UINT64 inboundZeroChecksumPackets;
+    UINT64 outboundSctpPackets;
+    UINT64 outboundZeroChecksumPackets;
 } RtcSctpMetrics, *PRtcSctpMetrics;
 
 /**

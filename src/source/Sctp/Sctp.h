@@ -25,10 +25,19 @@ extern "C" {
 #ifndef SCTP_FRAG_LEVEL_2
 #define SCTP_FRAG_LEVEL_2 0x00000002
 #endif
+#ifndef SCTP_ACCEPT_ZERO_CHECKSUM
+#define SCTP_ACCEPT_ZERO_CHECKSUM 0x00000033
+#endif
+#ifndef SCTP_EDMID_LOWER_LAYER_DTLS
+#define SCTP_EDMID_LOWER_LAYER_DTLS 1
+#endif
 
 // 1200 - 12 (SCTP header Size)
 #define SCTP_MTU                         1188
 #define SCTP_ASSOCIATION_DEFAULT_PORT    5000
+#define SCTP_COMMON_HEADER_LENGTH        12
+#define SCTP_CHECKSUM_OFFSET             8
+#define SCTP_CHECKSUM_LENGTH             4
 #define SCTP_DCEP_HEADER_LENGTH          12
 #define SCTP_DCEP_LABEL_LEN_OFFSET       8
 #define SCTP_DCEP_LABEL_OFFSET           12
@@ -122,6 +131,10 @@ typedef struct {
     volatile SIZE_T notifications;
     volatile SIZE_T lastSendErrno;
     volatile SIZE_T lastWritableBytes;
+    volatile SIZE_T inboundSctpPackets;
+    volatile SIZE_T inboundZeroChecksumPackets;
+    volatile SIZE_T outboundSctpPackets;
+    volatile SIZE_T outboundZeroChecksumPackets;
     struct socket* socket;
     SctpSessionCallbacks sctpSessionCallbacks;
     TIMER_QUEUE_HANDLE timerQueueHandle;
@@ -129,6 +142,8 @@ typedef struct {
     UINT32 writableThresholdBytes;
     UINT64 timerInterval;
     BOOL internalTimerThread;
+    BOOL zeroChecksumRequested;
+    BOOL zeroChecksumPacketMetrics;
 } SctpSession, *PSctpSession;
 
 STATUS initSctpSession();
