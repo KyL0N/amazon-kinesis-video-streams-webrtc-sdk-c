@@ -107,6 +107,16 @@ STATUS socketConnectionInitSecureConnection(PSocketConnection, BOOL, TIMER_QUEUE
 STATUS socketConnectionSendData(PSocketConnection, PBYTE, UINT32, PKvsIpAddress);
 
 /**
+ * Send one datagram on an unencrypted UDP socket without taking the socket
+ * mutex or waiting for POLLOUT. The caller must keep the SocketConnection
+ * alive for the duration of the call (the ICE agent lock does this for the
+ * selected candidate path). A full kernel send queue is reported as
+ * STATUS_SOCKET_CONNECTION_NOT_READY_TO_SEND so the transport can account for
+ * the local drop and let the upper reliability layer recover.
+ */
+STATUS socketConnectionSendDataDirectUdp(PSocketConnection, PBYTE, UINT32, PKvsIpAddress);
+
+/**
  * If PSocketConnection is not secure then nothing happens, otherwise assuming the bytes passed in are encrypted, and
  * the encryted data will be replaced with unencrypted data at function return.
  *

@@ -4,6 +4,8 @@
 #define LOG_CLASS "SocketConnection"
 #include "../Include_i.h"
 
+static STATUS socketSendDataInternal(PSocketConnection, PBYTE, UINT32, PKvsIpAddress, PUINT32, BOOL);
+
 STATUS createSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, PKvsIpAddress pBindAddr, PKvsIpAddress pPeerIpAddr,
                               UINT64 customData, ConnectionDataAvailableFunc dataAvailableFn, UINT32 sendBufSize,
                               PSocketConnection* ppSocketConnection)
@@ -339,6 +341,20 @@ CleanUp:
     return retStatus;
 }
 
+STATUS socketConnectionSendDataDirectUdp(PSocketConnection pSocketConnection, PBYTE pBuf, UINT32 bufLen, PKvsIpAddress pDestIp)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+
+    CHK(pSocketConnection != NULL && pBuf != NULL && pDestIp != NULL, STATUS_NULL_ARG);
+    CHK(bufLen > 0 && pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP && !pSocketConnection->secureConnection, STATUS_INVALID_ARG);
+    CHK(!ATOMIC_LOAD_BOOL(&pSocketConnection->connectionClosed), STATUS_SOCKET_CONNECTION_CLOSED_ALREADY);
+
+    CHK_STATUS(socketSendDataInternal(pSocketConnection, pBuf, bufLen, pDestIp, NULL, FALSE));
+
+CleanUp:
+    return retStatus;
+}
+
 STATUS socketConnectionReadData(PSocketConnection pSocketConnection, PBYTE pBuf, UINT32 bufferLen, PUINT32 pDataLen)
 {
     STATUS retStatus = STATUS_SUCCESS;
@@ -500,6 +516,12 @@ BOOL socketConnectionIsConnected(PSocketConnection pSocketConnection)
 
 STATUS socketSendDataWithRetry(PSocketConnection pSocketConnection, PBYTE buf, UINT32 bufLen, PKvsIpAddress pDestIp, PUINT32 pBytesWritten)
 {
+    return socketSendDataInternal(pSocketConnection, buf, bufLen, pDestIp, pBytesWritten, TRUE);
+}
+
+static STATUS socketSendDataInternal(PSocketConnection pSocketConnection, PBYTE buf, UINT32 bufLen, PKvsIpAddress pDestIp,
+                                     PUINT32 pBytesWritten, BOOL waitForWritable)
+{
     STATUS retStatus = STATUS_SUCCESS;
     INT32 socketWriteAttempt = 0;
     SSIZE_T result = 0;
@@ -539,6 +561,10 @@ STATUS socketSendDataWithRetry(PSocketConnection pSocketConnection, PBYTE buf, U
         if (result < 0) {
             errorNum = getErrorCode();
             if (errorNum == EAGAIN || errorNum == EWOULDBLOCK) {
+                if (!waitForWritable) {
+                    retStatus = STATUS_SOCKET_CONNECTION_NOT_READY_TO_SEND;
+                    break;
+                }
                 MEMSET(&wfds, 0x00, SIZEOF(struct pollfd));
                 wfds.fd = pSocketConnection->localSocket;
                 wfds.events = POLLOUT;
@@ -587,7 +613,7 @@ STATUS socketSendDataWithRetry(PSocketConnection pSocketConnection, PBYTE buf, U
         CLOSE_SOCKET_IF_CANT_RETRY(errorNum, pSocketConnection);
     }
 
-    if (bytesWritten < bufLen) {
+    if (bytesWritten < bufLen && STATUS_SUCCEEDED(retStatus)) {
         DLOGD("Failed to send data. Bytes sent %u. Data len %u. Retry count %u", bytesWritten, bufLen, socketWriteAttempt);
         retStatus = STATUS_SEND_DATA_FAILED;
     }

@@ -857,11 +857,25 @@ STATUS iceAgentSendPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen)
         pTurnConnection = pIceAgent->pDataSendingIceCandidatePair->local->pTurnConnection;
     }
 
-    retStatus = iceUtilsSendData(pBuffer, bufferLen, &pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress,
-                                 pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection, pTurnConnection, isRelay);
+    if (isRelay) {
+        retStatus = iceUtilsSendData(pBuffer, bufferLen, &pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress,
+                                     pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection, pTurnConnection, TRUE);
+    } else {
+        /* The selected direct candidate is an unencrypted UDP socket whose
+         * lifetime is protected by the ICE agent lock held here. Avoid a
+         * second mutex and, critically, never wait for POLLOUT while the ICE
+         * and DTLS call chain is locked. SCTP will recover a locally dropped
+         * datagram from the missing acknowledgement. */
+        retStatus = socketConnectionSendDataDirectUdp(pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection, pBuffer, bufferLen,
+                                                      &pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress);
+    }
 
     if (STATUS_FAILED(retStatus)) {
-        DLOGW("iceUtilsSendData failed with 0x%08x", retStatus);
+        if (retStatus == STATUS_SOCKET_CONNECTION_NOT_READY_TO_SEND) {
+            DLOGV("Selected UDP socket is temporarily not writable");
+        } else {
+            DLOGW("ICE transport send failed with 0x%08x", retStatus);
+        }
         packetsDiscarded++;
         bytesDiscarded = bufferLen; // This includes header and padding. TODO: update length to remove header and padding
         if (retStatus == STATUS_SOCKET_CONNECTION_CLOSED_ALREADY) {
@@ -2711,25 +2725,18 @@ STATUS incomingDataHandler(UINT64 customData, PSocketConnection pSocketConnectio
     PSocketConnection pSocketConnectionToShutdown = NULL;
     BOOL locked = FALSE;
     UINT32 addrLen = 0;
+    UINT64 receiveTime = 0;
     CHK(pIceAgent != NULL && pSocketConnection != NULL, STATUS_NULL_ARG);
 
-    MUTEX_LOCK(pIceAgent->lock);
-    locked = TRUE;
-
-    pIceAgent->lastDataReceivedTime = GETTIME();
+    receiveTime = GETTIME();
 
     // for stun packets, first 8 bytes are 4 byte type and length, then 4 byte magic byte
     if ((bufferLen < 8 || !IS_STUN_PACKET(pBuffer)) && pIceAgent->iceAgentCallbacks.inboundPacketFn != NULL) {
-        // release lock early
-
-        MUTEX_UNLOCK(pIceAgent->lock);
-        // Not currently used since inboundPacketFn returns VOID. No jumps to CleanUp.
-        // locked = FALSE;
         pIceAgent->iceAgentCallbacks.inboundPacketFn(pIceAgent->iceAgentCallbacks.customData, pBuffer, bufferLen);
 
         MUTEX_LOCK(pIceAgent->lock);
-        // Not currently used since inboundPacketFn returns VOID. No jumps to CleanUp.
-        // locked = TRUE;
+        locked = TRUE;
+        pIceAgent->lastDataReceivedTime = receiveTime;
         addrLen = IS_IPV4_ADDR(pSrc) ? IPV4_ADDRESS_LENGTH : IPV6_ADDRESS_LENGTH;
         if (pIceAgent->pDataSendingIceCandidatePair != NULL &&
             pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection == pSocketConnection &&
@@ -2737,13 +2744,16 @@ STATUS incomingDataHandler(UINT64 customData, PSocketConnection pSocketConnectio
             MEMCMP(pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress.address, pSrc->address, addrLen) == 0 &&
             (pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress.port == pSrc->port)) {
             if (pIceAgent->pDataSendingIceCandidatePair->pRtcIceCandidatePairDiagnostics != NULL) {
-                pIceAgent->pDataSendingIceCandidatePair->pRtcIceCandidatePairDiagnostics->lastPacketReceivedTimestamp = GETTIME();
+                pIceAgent->pDataSendingIceCandidatePair->pRtcIceCandidatePairDiagnostics->lastPacketReceivedTimestamp = receiveTime;
                 pIceAgent->pDataSendingIceCandidatePair->pRtcIceCandidatePairDiagnostics->bytesReceived += bufferLen;
                 pIceAgent->pDataSendingIceCandidatePair->pRtcIceCandidatePairDiagnostics
                     ->packetsReceived++; // Since every byte buffer translates to a single RTP packet
             }
         }
     } else {
+        MUTEX_LOCK(pIceAgent->lock);
+        locked = TRUE;
+        pIceAgent->lastDataReceivedTime = receiveTime;
         if (ATOMIC_LOAD_BOOL(&pIceAgent->processStun)) {
             CHK_STATUS(handleStunPacket(pIceAgent, pBuffer, bufferLen, pSocketConnection, pSrc, pDest, &pSocketConnectionToShutdown));
             MUTEX_UNLOCK(pIceAgent->lock);
