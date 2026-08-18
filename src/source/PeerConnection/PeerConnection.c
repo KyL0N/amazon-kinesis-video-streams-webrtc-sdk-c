@@ -202,8 +202,10 @@ VOID onInboundPacket(UINT64 customData, PBYTE buff, UINT32 buffLen)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
+    STATUS batchStatus = STATUS_SUCCESS;
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
     BOOL isDtlsConnected = FALSE;
+    BOOL transportBatchActive = FALSE;
     INT32 signedBuffLen = buffLen;
 
     CHK(signedBuffLen > 2 && pKvsPeerConnection != NULL, STATUS_SUCCESS);
@@ -235,7 +237,12 @@ VOID onInboundPacket(UINT64 customData, PBYTE buff, UINT32 buffLen)
                 }
 
                 if (signedBuffLen > 0) {
+                    CHK_STATUS(transportPacketBatchBegin(pKvsPeerConnection->pTransportPacketBatch));
+                    transportBatchActive = TRUE;
                     CHK_STATUS(putSctpPacket(pKvsPeerConnection->pSctpSession, buff, signedBuffLen));
+                    batchStatus = transportPacketBatchEnd(pKvsPeerConnection->pTransportPacketBatch, pKvsPeerConnection->pIceAgent);
+                    transportBatchActive = FALSE;
+                    CHK_STATUS(batchStatus);
                 }
             }
 #endif
@@ -256,6 +263,9 @@ VOID onInboundPacket(UINT64 customData, PBYTE buff, UINT32 buffLen)
     }
 
 CleanUp:
+    if (transportBatchActive) {
+        CHK_LOG_ERR(transportPacketBatchEnd(pKvsPeerConnection->pTransportPacketBatch, pKvsPeerConnection->pIceAgent));
+    }
     CHK_LOG_ERR(retStatus);
 
     LEAVES();
@@ -727,7 +737,7 @@ VOID onDtlsOutboundPacket(UINT64 customData, PBYTE pBuffer, UINT32 bufferLen)
     }
 
     pKvsPeerConnection = (PKvsPeerConnection) customData;
-    iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pBuffer, bufferLen);
+    CHK_LOG_ERR(transportPacketBatchQueue(pKvsPeerConnection->pTransportPacketBatch, pKvsPeerConnection->pIceAgent, pBuffer, bufferLen));
     LEAVES();
 }
 
@@ -1059,6 +1069,7 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     CHK(pKvsPeerConnection != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
     CHK_STATUS(timerQueueCreate(&pKvsPeerConnection->timerQueueHandle));
+    CHK_STATUS(createTransportPacketBatch(&pKvsPeerConnection->pTransportPacketBatch));
 
     pKvsPeerConnection->peerConnection.version = PEER_CONNECTION_CURRENT_VERSION;
 
@@ -1200,6 +1211,7 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     // free rest of structs
     CHK_LOG_ERR(freeSrtpSession(&pKvsPeerConnection->pSrtpSession));
     CHK_LOG_ERR(freeDtlsSession(&pKvsPeerConnection->pDtlsSession));
+    CHK_LOG_ERR(freeTransportPacketBatch(&pKvsPeerConnection->pTransportPacketBatch));
     // Since ICE agent has a callback invoked from DTLS during handshake,
     // it is safer to free the ICE agent after DTLS session
     CHK_LOG_ERR(freeIceAgent(&pKvsPeerConnection->pIceAgent));

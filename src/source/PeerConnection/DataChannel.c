@@ -59,18 +59,31 @@ CleanUp:
 STATUS dataChannelSend(PRtcDataChannel pRtcDataChannel, BOOL isBinary, PBYTE pMessage, UINT32 pMessageLen)
 {
     STATUS retStatus = STATUS_SUCCESS;
+    STATUS batchStatus = STATUS_SUCCESS;
     PSctpSession pSctpSession = NULL;
     PKvsDataChannel pKvsDataChannel = (PKvsDataChannel) pRtcDataChannel;
+    PKvsPeerConnection pKvsPeerConnection = NULL;
+    BOOL transportBatchActive = FALSE;
 
     CHK(pKvsDataChannel != NULL && pMessage != NULL, STATUS_NULL_ARG);
 
-    pSctpSession = ((PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection)->pSctpSession;
+    pKvsPeerConnection = (PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection;
+    pSctpSession = pKvsPeerConnection->pSctpSession;
 
+    CHK_STATUS(transportPacketBatchBegin(pKvsPeerConnection->pTransportPacketBatch));
+    transportBatchActive = TRUE;
     CHK_STATUS(sctpSessionWriteMessage(pSctpSession, pKvsDataChannel->channelId, isBinary, pMessage, pMessageLen,
                                        &pKvsDataChannel->rtcDataChannelInit));
+    batchStatus = transportPacketBatchEnd(pKvsPeerConnection->pTransportPacketBatch, pKvsPeerConnection->pIceAgent);
+    transportBatchActive = FALSE;
+    CHK_STATUS(batchStatus);
     pKvsDataChannel->rtcDataChannelDiagnostics.messagesSent++;
     pKvsDataChannel->rtcDataChannelDiagnostics.bytesSent += pMessageLen;
 CleanUp:
+
+    if (transportBatchActive) {
+        CHK_LOG_ERR(transportPacketBatchEnd(pKvsPeerConnection->pTransportPacketBatch, pKvsPeerConnection->pIceAgent));
+    }
 
     return retStatus;
 }

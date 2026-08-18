@@ -826,6 +826,14 @@ CleanUp:
 
 STATUS iceAgentSendPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen)
 {
+    PBYTE buffers[1] = {pBuffer};
+    UINT32 bufferLens[1] = {bufferLen};
+
+    return iceAgentSendPacketBatch(pIceAgent, buffers, bufferLens, 1);
+}
+
+STATUS iceAgentSendPacketBatch(PIceAgent pIceAgent, PBYTE* ppBuffers, PUINT32 pBufferLens, UINT32 packetCount)
+{
     STATUS retStatus = STATUS_SUCCESS;
     BOOL locked = FALSE, isRelay = FALSE;
     PTurnConnection pTurnConnection = NULL;
@@ -833,16 +841,19 @@ STATUS iceAgentSendPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen)
     UINT32 bytesDiscarded = 0;
     UINT32 bytesSent = 0;
     UINT32 packetsSent = 0;
+    UINT32 i = 0;
 
-    CHK(pIceAgent != NULL && pBuffer != NULL, STATUS_NULL_ARG);
-    CHK(bufferLen != 0, STATUS_INVALID_ARG);
+    CHK(pIceAgent != NULL && ppBuffers != NULL && pBufferLens != NULL, STATUS_NULL_ARG);
+    CHK(packetCount > 0 && packetCount <= SOCKET_SEND_BATCH_MAX, STATUS_INVALID_ARG);
+    for (i = 0; i < packetCount; i++) {
+        CHK(ppBuffers[i] != NULL && pBufferLens[i] > 0, STATUS_INVALID_ARG);
+    }
 
     MUTEX_LOCK(pIceAgent->lock);
     locked = TRUE;
 
     /* Do not proceed if ice is shutting down */
     CHK(!ATOMIC_LOAD_BOOL(&pIceAgent->shutdown), retStatus);
-    CHK(bufferLen != 0, STATUS_INVALID_ARG);
 
     CHK_WARN(pIceAgent->pDataSendingIceCandidatePair != NULL, retStatus, "No valid ice candidate pair available to send data");
     CHK_WARN(pIceAgent->pDataSendingIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_SUCCEEDED, retStatus,
@@ -858,16 +869,34 @@ STATUS iceAgentSendPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen)
     }
 
     if (isRelay) {
-        retStatus = iceUtilsSendData(pBuffer, bufferLen, &pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress,
-                                     pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection, pTurnConnection, TRUE);
+        for (packetsSent = 0; packetsSent < packetCount; packetsSent++) {
+            retStatus = iceUtilsSendData(ppBuffers[packetsSent], pBufferLens[packetsSent],
+                                         &pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress,
+                                         pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection, pTurnConnection, TRUE);
+            if (STATUS_FAILED(retStatus)) {
+                break;
+            }
+            bytesSent += pBufferLens[packetsSent];
+        }
+    } else if (packetCount == 1) {
+        retStatus = socketConnectionSendDataDirectUdp(pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection, ppBuffers[0],
+                                                      pBufferLens[0], &pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress);
+        if (STATUS_SUCCEEDED(retStatus)) {
+            packetsSent = 1;
+            bytesSent = pBufferLens[0];
+        }
     } else {
         /* The selected direct candidate is an unencrypted UDP socket whose
          * lifetime is protected by the ICE agent lock held here. Avoid a
          * second mutex and, critically, never wait for POLLOUT while the ICE
          * and DTLS call chain is locked. SCTP will recover a locally dropped
          * datagram from the missing acknowledgement. */
-        retStatus = socketConnectionSendDataDirectUdp(pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection, pBuffer, bufferLen,
-                                                      &pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress);
+        retStatus = socketConnectionSendDataDirectUdpBatch(pIceAgent->pDataSendingIceCandidatePair->local->pSocketConnection, ppBuffers,
+                                                           pBufferLens, packetCount,
+                                                           &pIceAgent->pDataSendingIceCandidatePair->remote->ipAddress, &packetsSent);
+        for (i = 0; i < packetsSent; i++) {
+            bytesSent += pBufferLens[i];
+        }
     }
 
     if (STATUS_FAILED(retStatus)) {
@@ -876,23 +905,24 @@ STATUS iceAgentSendPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen)
         } else {
             DLOGW("ICE transport send failed with 0x%08x", retStatus);
         }
-        packetsDiscarded++;
-        bytesDiscarded = bufferLen; // This includes header and padding. TODO: update length to remove header and padding
+        packetsDiscarded = packetCount - packetsSent;
+        for (i = packetsSent; i < packetCount; i++) {
+            bytesDiscarded += pBufferLens[i]; // Includes DTLS header and padding.
+        }
         if (retStatus == STATUS_SOCKET_CONNECTION_CLOSED_ALREADY) {
             DLOGW("IceAgent connection closed unexpectedly");
             pIceAgent->iceAgentStatus = STATUS_SOCKET_CONNECTION_CLOSED_ALREADY;
             pIceAgent->pDataSendingIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_FAILED;
         }
         retStatus = STATUS_SUCCESS;
-    } else {
+    }
+
+    if (packetsSent > 0) {
         // TODO: use a better estimate of actual time when packet was sent
         // eg setsockopt(SO_TIMESTAMPING)
         // SOF_TIMESTAMPING_TX_HARDWARE - tx timestamps generated by network hardware
         // SOF_TIMESTAMPING_TX_SOFTWARE - tx timestamps generated by kernel, when data leaves kernel, before hardware
         pIceAgent->pDataSendingIceCandidatePair->lastDataSentTime = GETTIME();
-
-        bytesSent = bufferLen;
-        packetsSent++;
     }
 
 CleanUp:

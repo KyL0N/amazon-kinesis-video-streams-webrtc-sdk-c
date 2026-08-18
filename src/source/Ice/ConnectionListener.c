@@ -1,13 +1,19 @@
 /**
  * Kinesis Video Producer ConnectionListener
  */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #define LOG_CLASS "ConnectionListener"
 #include "../Include_i.h"
+
+static STATUS connectionListenerDispatchDatagram(PSocketConnection, PBYTE, UINT32, UINT32, struct sockaddr_storage*);
 
 STATUS createConnectionListener(PConnectionListener* ppConnectionListener)
 {
     STATUS retStatus = STATUS_SUCCESS;
-    UINT32 allocationSize = SIZEOF(ConnectionListener) + MAX_UDP_PACKET_SIZE;
+    UINT32 allocationSize = SIZEOF(ConnectionListener) + MAX_UDP_PACKET_SIZE * CONNECTION_LISTENER_RECEIVE_BATCH_SIZE;
     PConnectionListener pConnectionListener = NULL;
 
     CHK(ppConnectionListener != NULL, STATUS_NULL_ARG);
@@ -236,6 +242,49 @@ BOOL canReadFd(INT32 fd, struct pollfd* fds, INT32 nfds)
     return FALSE;
 }
 
+static STATUS connectionListenerDispatchDatagram(PSocketConnection pSocketConnection, PBYTE pBuffer, UINT32 bufferLen, UINT32 dataLen,
+                                                 struct sockaddr_storage* pSrcAddrStorage)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    struct sockaddr_in* pIpv4Addr = NULL;
+    struct sockaddr_in6* pIpv6Addr = NULL;
+    KvsIpAddress srcAddr;
+    PKvsIpAddress pSrcAddr = NULL;
+
+    CHK(pSocketConnection != NULL && pBuffer != NULL, STATUS_NULL_ARG);
+    CHK(ATOMIC_LOAD_BOOL(&pSocketConnection->receiveData) && pSocketConnection->dataAvailableCallbackFn != NULL, retStatus);
+
+    /* Secure SocketConnections decrypt in place. Plain ICE candidate sockets
+     * return without changing dataLen. */
+    CHK(STATUS_SUCCEEDED(socketConnectionReadData(pSocketConnection, pBuffer, bufferLen, &dataLen)), retStatus);
+
+    if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP && pSrcAddrStorage != NULL) {
+        MEMSET(&srcAddr, 0x00, SIZEOF(srcAddr));
+        srcAddr.isPointToPoint = FALSE;
+        if (pSrcAddrStorage->ss_family == AF_INET) {
+            srcAddr.family = KVS_IP_FAMILY_TYPE_IPV4;
+            pIpv4Addr = (struct sockaddr_in*) pSrcAddrStorage;
+            MEMCPY(srcAddr.address, (PBYTE) &pIpv4Addr->sin_addr, IPV4_ADDRESS_LENGTH);
+            srcAddr.port = pIpv4Addr->sin_port;
+            pSrcAddr = &srcAddr;
+        } else if (pSrcAddrStorage->ss_family == AF_INET6) {
+            srcAddr.family = KVS_IP_FAMILY_TYPE_IPV6;
+            pIpv6Addr = (struct sockaddr_in6*) pSrcAddrStorage;
+            MEMCPY(srcAddr.address, (PBYTE) &pIpv6Addr->sin6_addr, IPV6_ADDRESS_LENGTH);
+            srcAddr.port = pIpv6Addr->sin6_port;
+            pSrcAddr = &srcAddr;
+        }
+    }
+
+    if (dataLen > 0) {
+        pSocketConnection->dataAvailableCallbackFn(pSocketConnection->dataAvailableCallbackCustomData, pSocketConnection, pBuffer, dataLen,
+                                                   pSrcAddr, NULL);
+    }
+
+CleanUp:
+    return retStatus;
+}
+
 PVOID connectionListenerReceiveDataRoutine(PVOID arg)
 {
     STATUS retStatus = STATUS_SUCCESS;
@@ -253,10 +302,13 @@ PVOID connectionListenerReceiveDataRoutine(PVOID arg)
     // the source address is put here. sockaddr_storage can hold either sockaddr_in or sockaddr_in6
     struct sockaddr_storage srcAddrBuff;
     socklen_t srcAddrBuffLen = SIZEOF(srcAddrBuff);
-    struct sockaddr_in* pIpv4Addr;
-    struct sockaddr_in6* pIpv6Addr;
-    KvsIpAddress srcAddr;
-    PKvsIpAddress pSrcAddr = NULL;
+#if defined(__linux__)
+    struct mmsghdr messages[CONNECTION_LISTENER_RECEIVE_BATCH_SIZE];
+    struct iovec ioVectors[CONNECTION_LISTENER_RECEIVE_BATCH_SIZE];
+    struct sockaddr_storage batchSrcAddrs[CONNECTION_LISTENER_RECEIVE_BATCH_SIZE];
+    UINT32 batchIndex = 0;
+    INT32 receivedCount = 0;
+#endif
 
     CHK(pConnectionListener != NULL, STATUS_NULL_ARG);
 
@@ -265,7 +317,18 @@ PVOID connectionListenerReceiveDataRoutine(PVOID arg)
      * implemented in assembly. */
     MEMSET(&rfds, 0x00, SIZEOF(rfds));
 
-    srcAddr.isPointToPoint = FALSE;
+#if defined(__linux__)
+    MEMSET(messages, 0x00, SIZEOF(messages));
+    MEMSET(ioVectors, 0x00, SIZEOF(ioVectors));
+    MEMSET(batchSrcAddrs, 0x00, SIZEOF(batchSrcAddrs));
+    for (batchIndex = 0; batchIndex < CONNECTION_LISTENER_RECEIVE_BATCH_SIZE; batchIndex++) {
+        ioVectors[batchIndex].iov_base = pConnectionListener->pBuffer + batchIndex * pConnectionListener->bufferLen;
+        ioVectors[batchIndex].iov_len = pConnectionListener->bufferLen;
+        messages[batchIndex].msg_hdr.msg_iov = &ioVectors[batchIndex];
+        messages[batchIndex].msg_hdr.msg_iovlen = 1;
+        messages[batchIndex].msg_hdr.msg_name = &batchSrcAddrs[batchIndex];
+    }
+#endif
 
     while (!ATOMIC_LOAD_BOOL(&pConnectionListener->terminate)) {
         nfds = 0;
@@ -335,11 +398,68 @@ PVOID connectionListenerReceiveDataRoutine(PVOID arg)
                     if (canReadFd(localSocket, rfds, nfds)) {
                         iterate = TRUE;
                         while (iterate) {
+#if defined(__linux__)
+                            if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP) {
+                                for (batchIndex = 0; batchIndex < CONNECTION_LISTENER_RECEIVE_BATCH_SIZE; batchIndex++) {
+                                    messages[batchIndex].msg_hdr.msg_namelen = SIZEOF(batchSrcAddrs[batchIndex]);
+                                    messages[batchIndex].msg_hdr.msg_flags = 0;
+                                    messages[batchIndex].msg_len = 0;
+                                }
+
+                                receivedCount = recvmmsg(localSocket, messages, CONNECTION_LISTENER_RECEIVE_BATCH_SIZE, MSG_DONTWAIT, NULL);
+                                pConnectionListener->udpReceiveCalls++;
+                                if (receivedCount < 0) {
+                                    switch (getErrorCode()) {
+                                        case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
+                                        case EWOULDBLOCK:
+#endif
+                                        case EINTR:
+                                            break;
+                                        default:
+                                            CHK_STATUS(socketConnectionClosed(pSocketConnection));
+                                            DLOGD("recvmmsg() failed with errno %s for socket %d", getErrorString(getErrorCode()), localSocket);
+                                            break;
+                                    }
+                                    iterate = FALSE;
+                                    continue;
+                                }
+
+                                if (receivedCount == 0) {
+                                    CHK_STATUS(socketConnectionClosed(pSocketConnection));
+                                    iterate = FALSE;
+                                    continue;
+                                }
+
+                                pConnectionListener->udpPacketsReceived += receivedCount;
+                                if ((UINT32) receivedCount > pConnectionListener->udpLargestBatch) {
+                                    pConnectionListener->udpLargestBatch = (UINT32) receivedCount;
+                                }
+                                for (batchIndex = 0; batchIndex < (UINT32) receivedCount; batchIndex++) {
+                                    if ((messages[batchIndex].msg_hdr.msg_flags & MSG_TRUNC) != 0) {
+                                        DLOGW("Dropping truncated UDP datagram on socket %d", localSocket);
+                                        continue;
+                                    }
+                                    CHK_STATUS(connectionListenerDispatchDatagram(
+                                        pSocketConnection, (PBYTE) ioVectors[batchIndex].iov_base, (UINT32) ioVectors[batchIndex].iov_len,
+                                        messages[batchIndex].msg_len,
+                                        &batchSrcAddrs[batchIndex]));
+                                }
+                                continue;
+                            }
+#endif
                             readLen = recvfrom(localSocket, pConnectionListener->pBuffer, pConnectionListener->bufferLen, 0,
                                                (struct sockaddr*) &srcAddrBuff, &srcAddrBuffLen);
+                            if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP) {
+                                pConnectionListener->udpReceiveCalls++;
+                            }
                             if (readLen < 0) {
                                 switch (getErrorCode()) {
+                                    case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
                                     case EWOULDBLOCK:
+#endif
+                                    case EINTR:
                                         break;
                                     default:
                                         /* on any other error, close connection */
@@ -352,37 +472,16 @@ PVOID connectionListenerReceiveDataRoutine(PVOID arg)
                             } else if (readLen == 0) {
                                 CHK_STATUS(socketConnectionClosed(pSocketConnection));
                                 iterate = FALSE;
-                            } else if (/* readLen > 0 */
-                                       ATOMIC_LOAD_BOOL(&pSocketConnection->receiveData) && pSocketConnection->dataAvailableCallbackFn != NULL &&
-                                       /* data could be encrypted so they need to be decrypted through socketConnectionReadData
-                                        * and get the decrypted data length. */
-                                       STATUS_SUCCEEDED(socketConnectionReadData(pSocketConnection, pConnectionListener->pBuffer,
-                                                                                 pConnectionListener->bufferLen, (PUINT32) &readLen))) {
+                            } else {
                                 if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP) {
-                                    if (srcAddrBuff.ss_family == AF_INET) {
-                                        srcAddr.family = KVS_IP_FAMILY_TYPE_IPV4;
-                                        pIpv4Addr = (struct sockaddr_in*) &srcAddrBuff;
-                                        MEMCPY(srcAddr.address, (PBYTE) &pIpv4Addr->sin_addr, IPV4_ADDRESS_LENGTH);
-                                        srcAddr.port = pIpv4Addr->sin_port;
-                                    } else if (srcAddrBuff.ss_family == AF_INET6) {
-                                        srcAddr.family = KVS_IP_FAMILY_TYPE_IPV6;
-                                        pIpv6Addr = (struct sockaddr_in6*) &srcAddrBuff;
-                                        MEMCPY(srcAddr.address, (PBYTE) &pIpv6Addr->sin6_addr, IPV6_ADDRESS_LENGTH);
-                                        srcAddr.port = pIpv6Addr->sin6_port;
+                                    pConnectionListener->udpPacketsReceived++;
+                                    if (pConnectionListener->udpLargestBatch < 1) {
+                                        pConnectionListener->udpLargestBatch = 1;
                                     }
-                                    pSrcAddr = &srcAddr;
-                                } else {
-                                    // srcAddr is ignored in TCP callback handlers
-                                    pSrcAddr = NULL;
                                 }
-
-                                // readLen may be 0 if SSL does not emit any application data.
-                                // in that case, no need to call dataAvailable callback
-                                if (readLen > 0) {
-                                    pSocketConnection->dataAvailableCallbackFn(pSocketConnection->dataAvailableCallbackCustomData, pSocketConnection,
-                                                                               pConnectionListener->pBuffer, (UINT32) readLen, pSrcAddr,
-                                                                               NULL); // no dest information available right now.
-                                }
+                                CHK_STATUS(connectionListenerDispatchDatagram(pSocketConnection, pConnectionListener->pBuffer,
+                                                                              (UINT32) pConnectionListener->bufferLen, (UINT32) readLen,
+                                                                              &srcAddrBuff));
                             }
 
                             // reset srcAddrBuffLen to actual size
@@ -400,6 +499,9 @@ PVOID connectionListenerReceiveDataRoutine(PVOID arg)
     }
 
 CleanUp:
+
+    DLOGI("UDP receive summary: packets=%" PRIu64 ", syscalls=%" PRIu64 ", largestBatch=%u", pConnectionListener->udpPacketsReceived,
+          pConnectionListener->udpReceiveCalls, pConnectionListener->udpLargestBatch);
 
     CHK_LOG_ERR(retStatus);
 

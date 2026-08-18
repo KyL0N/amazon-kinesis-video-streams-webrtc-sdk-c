@@ -364,6 +364,7 @@ STATUS iceCandidateSerialize(PIceCandidate, PCHAR, PUINT32);
  * @return - STATUS - status of execution
  */
 STATUS iceAgentSendPacket(PIceAgent, PBYTE, UINT32);
+STATUS iceAgentSendPacketBatch(PIceAgent, PBYTE*, PUINT32, UINT32);
 
 /**
  * gather local IP addresses and create a udp port. If port creation succeeded then create a new candidate

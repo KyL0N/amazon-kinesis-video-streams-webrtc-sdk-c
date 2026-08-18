@@ -95,6 +95,7 @@ typedef struct {
     PSrtpSession pSrtpSession;
 
     PSctpSession pSctpSession;
+    PTransportPacketBatch pTransportPacketBatch;
     BOOL sctpSessionAllocationStarted;
     RtcSctpConfiguration sctpConfiguration;
     RtcOnSctpEvent onSctpEvent;

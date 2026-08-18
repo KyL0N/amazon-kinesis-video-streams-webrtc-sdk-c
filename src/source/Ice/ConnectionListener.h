@@ -16,6 +16,12 @@ extern "C" {
 #define CONNECTION_LISTENER_KICK_SOCKET_LISTEN               0
 #define CONNECTION_LISTENER_KICK_SOCKET_WRITE                1
 
+#if defined(__linux__)
+#define CONNECTION_LISTENER_RECEIVE_BATCH_SIZE 16
+#else
+#define CONNECTION_LISTENER_RECEIVE_BATCH_SIZE 1
+#endif
+
 typedef struct {
     volatile ATOMIC_BOOL terminate;
     PSocketConnection sockets[CONNECTION_LISTENER_DEFAULT_MAX_LISTENING_CONNECTION];
@@ -24,6 +30,9 @@ typedef struct {
     TID receiveDataRoutine;
     PBYTE pBuffer;
     UINT64 bufferLen;
+    UINT64 udpReceiveCalls;
+    UINT64 udpPacketsReceived;
+    UINT32 udpLargestBatch;
 #if defined(HAVE_SOCKETPAIR)
     INT32 kickSocket[2];
 #endif

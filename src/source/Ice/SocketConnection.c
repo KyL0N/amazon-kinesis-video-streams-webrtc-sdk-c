@@ -1,6 +1,10 @@
 /**
  * Kinesis Video Tcp
  */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #define LOG_CLASS "SocketConnection"
 #include "../Include_i.h"
 
@@ -352,6 +356,93 @@ STATUS socketConnectionSendDataDirectUdp(PSocketConnection pSocketConnection, PB
     CHK_STATUS(socketSendDataInternal(pSocketConnection, pBuf, bufLen, pDestIp, NULL, FALSE));
 
 CleanUp:
+    return retStatus;
+}
+
+STATUS socketConnectionSendDataDirectUdpBatch(PSocketConnection pSocketConnection, PBYTE* ppBuffers, PUINT32 pBufferLens, UINT32 packetCount,
+                                              PKvsIpAddress pDestIp, PUINT32 pPacketsSent)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT32 packetsSent = 0, i = 0;
+
+    CHK(pSocketConnection != NULL && ppBuffers != NULL && pBufferLens != NULL && pDestIp != NULL, STATUS_NULL_ARG);
+    CHK(packetCount > 0 && packetCount <= SOCKET_SEND_BATCH_MAX && pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP &&
+            !pSocketConnection->secureConnection,
+        STATUS_INVALID_ARG);
+    CHK(!ATOMIC_LOAD_BOOL(&pSocketConnection->connectionClosed), STATUS_SOCKET_CONNECTION_CLOSED_ALREADY);
+
+    for (i = 0; i < packetCount; i++) {
+        CHK(ppBuffers[i] != NULL && pBufferLens[i] > 0, STATUS_INVALID_ARG);
+    }
+
+#if defined(__linux__)
+    {
+        struct mmsghdr messages[SOCKET_SEND_BATCH_MAX];
+        struct iovec ioVectors[SOCKET_SEND_BATCH_MAX];
+        struct sockaddr_in ipv4Addr;
+        struct sockaddr_in6 ipv6Addr;
+        struct sockaddr* pDestAddr = NULL;
+        socklen_t destAddrLen = 0;
+        INT32 result = -1, errorNum = 0, attempts = 0;
+
+        MEMSET(messages, 0x00, SIZEOF(messages));
+        MEMSET(ioVectors, 0x00, SIZEOF(ioVectors));
+        if (IS_IPV4_ADDR(pDestIp)) {
+            MEMSET(&ipv4Addr, 0x00, SIZEOF(ipv4Addr));
+            ipv4Addr.sin_family = AF_INET;
+            ipv4Addr.sin_port = pDestIp->port;
+            MEMCPY(&ipv4Addr.sin_addr, pDestIp->address, IPV4_ADDRESS_LENGTH);
+            pDestAddr = (struct sockaddr*) &ipv4Addr;
+            destAddrLen = SIZEOF(ipv4Addr);
+        } else {
+            MEMSET(&ipv6Addr, 0x00, SIZEOF(ipv6Addr));
+            ipv6Addr.sin6_family = AF_INET6;
+            ipv6Addr.sin6_port = pDestIp->port;
+            MEMCPY(&ipv6Addr.sin6_addr, pDestIp->address, IPV6_ADDRESS_LENGTH);
+            pDestAddr = (struct sockaddr*) &ipv6Addr;
+            destAddrLen = SIZEOF(ipv6Addr);
+        }
+
+        for (i = 0; i < packetCount; i++) {
+            ioVectors[i].iov_base = ppBuffers[i];
+            ioVectors[i].iov_len = pBufferLens[i];
+            messages[i].msg_hdr.msg_iov = &ioVectors[i];
+            messages[i].msg_hdr.msg_iovlen = 1;
+            messages[i].msg_hdr.msg_name = pDestAddr;
+            messages[i].msg_hdr.msg_namelen = destAddrLen;
+        }
+
+        do {
+            result = sendmmsg(pSocketConnection->localSocket, messages, packetCount, NO_SIGNAL_SEND | MSG_DONTWAIT);
+            if (result < 0) {
+                errorNum = getErrorCode();
+            }
+        } while (result < 0 && errorNum == EINTR && ++attempts < MAX_SOCKET_WRITE_RETRY);
+
+        if (result < 0) {
+            CLOSE_SOCKET_IF_CANT_RETRY(errorNum, pSocketConnection);
+            retStatus = (errorNum == EAGAIN || errorNum == EWOULDBLOCK) ? STATUS_SOCKET_CONNECTION_NOT_READY_TO_SEND
+                                                                       : STATUS_SEND_DATA_FAILED;
+        } else {
+            packetsSent = (UINT32) result;
+            if (packetsSent < packetCount) {
+                retStatus = STATUS_SOCKET_CONNECTION_NOT_READY_TO_SEND;
+            }
+        }
+    }
+#else
+    for (packetsSent = 0; packetsSent < packetCount; packetsSent++) {
+        retStatus = socketConnectionSendDataDirectUdp(pSocketConnection, ppBuffers[packetsSent], pBufferLens[packetsSent], pDestIp);
+        if (STATUS_FAILED(retStatus)) {
+            break;
+        }
+    }
+#endif
+
+CleanUp:
+    if (pPacketsSent != NULL) {
+        *pPacketsSent = packetsSent;
+    }
     return retStatus;
 }
 

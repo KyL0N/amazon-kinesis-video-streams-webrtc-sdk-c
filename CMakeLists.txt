@@ -529,6 +529,7 @@ file(
   "src/source/PeerConnection/Rtcp.c"
   "src/source/PeerConnection/Rtp.c"
   "src/source/PeerConnection/SessionDescription.c"
+  "src/source/PeerConnection/TransportPacketBatch.c"
   "src/source/Rtcp/*.c"
   "src/source/Rtp/*.c"
   "src/source/Rtp/Codecs/*.c"

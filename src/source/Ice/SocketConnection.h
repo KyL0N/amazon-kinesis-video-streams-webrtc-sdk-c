@@ -12,6 +12,7 @@ extern "C" {
 
 #define SOCKET_SEND_RETRY_TIMEOUT_MILLI_SECOND 500
 #define MAX_SOCKET_WRITE_RETRY                 3
+#define SOCKET_SEND_BATCH_MAX                  16
 
 #define CLOSE_SOCKET_IF_CANT_RETRY(e, ps)                                                                                                            \
     if ((e) != EAGAIN && (e) != EWOULDBLOCK && (e) != EINTR && (e) != EINPROGRESS && (e) != EPERM && (e) != EALREADY && (e) != ENETUNREACH) {        \
@@ -115,6 +116,13 @@ STATUS socketConnectionSendData(PSocketConnection, PBYTE, UINT32, PKvsIpAddress)
  * the local drop and let the upper reliability layer recover.
  */
 STATUS socketConnectionSendDataDirectUdp(PSocketConnection, PBYTE, UINT32, PKvsIpAddress);
+
+/**
+ * Linux uses sendmmsg for two or more direct UDP datagrams; other platforms
+ * retain the same API with a sendto loop. pPacketsSent reports the successfully
+ * submitted prefix when the non-blocking socket accepts only part of a batch.
+ */
+STATUS socketConnectionSendDataDirectUdpBatch(PSocketConnection, PBYTE*, PUINT32, UINT32, PKvsIpAddress, PUINT32);
 
 /**
  * If PSocketConnection is not secure then nothing happens, otherwise assuming the bytes passed in are encrypted, and
