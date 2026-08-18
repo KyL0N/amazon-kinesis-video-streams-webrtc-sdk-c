@@ -157,6 +157,9 @@ You can pass the following options to `cmake ..`:
 * `-DUSE_LIBSRTP3` -- Build and link against libsrtp 3.x (cisco/libsrtp `main`, renamed to `libsrtp3`) instead of the long-standing 2.x default. OFF by default. The 3.x line adds PSA Crypto / mbedTLS 4 support but introduces public API breaks (opaque `srtp_policy_t`, separate src/dst buffers on `srtp_protect`/`srtp_unprotect`, separate master key + salt) — these are handled internally by the SDK. Use this if your platform requires mbedTLS 4 (e.g. ESP-IDF v6).
 * `-DUSE_OPENSSL3` -- Build and link against OpenSSL 3.x (git tag `openssl-3.5.7`) instead of the default 1.1.1t (`OpenSSL_1_1_1t`). OFF by default. When linking against a system OpenSSL that is already >= 3.0, this flag is auto-enabled. The mbedTLS path is unaffected. See [Building against OpenSSL 3.x](#building-against-openssl-3x) for usage.
 * `-DBUILD_USRSCTP` -- Build libusrsctp from source. Defaults to value of BUILD_DEPENDENCIES.
+* `-DKVS_USRSCTP_GIT_REPOSITORY=<url>` -- Select the usrsctp Git repository when `BUILD_USRSCTP` is enabled. The frozen default remains `https://github.com/sctplab/usrsctp.git`.
+* `-DKVS_USRSCTP_GIT_TAG=<revision>` -- Select an exact usrsctp commit or tag. The frozen default remains `1ade45cbadfd19298d2c47dc538962d4425ad2dd`.
+* `-DKVS_USRSCTP_SOURCE_DIR=<path>` -- Build from an existing usrsctp worktree instead of downloading it. This takes precedence over the Git repository and revision.
 * `-DBUILD_OPENSSL_PLATFORM` -- If building OpenSSL what is the target platform
 * `-DBUILD_LIBSRTP_HOST_PLATFORM` -- If building LibSRTP what is the current platform
 * `-DBUILD_LIBSRTP_DESTINATION_PLATFORM` -- If building LibSRTP what is the destination platform
@@ -184,6 +187,20 @@ Buffer configuration:
 * `-DKVS_SIGNALING_MESSAGE_LEN` -- Maximum signaling message size in bytes (on-wire, including base64-encoded payload). Range: 10000–40000. Default: 18750. The decoded SDP buffer is automatically derived. See [docs/SDP_BUFFER_SIZE.md](docs/SDP_BUFFER_SIZE.md) for details.
 
 To clean up the `open-source` and `build` folders from previous build, use `cmake --build . --target clean` from the `build` folder
+
+For a reproducible build of the lab's ARM64 CRC32C candidate, pin both its
+public repository and full commit SHA:
+
+```shell
+cmake .. \
+  -DBUILD_USRSCTP=ON \
+  -DKVS_USRSCTP_GIT_REPOSITORY=https://github.com/KyL0N/usrsctp.git \
+  -DKVS_USRSCTP_GIT_TAG=113c7cd6e2843e9140ef402330fce61f6be7ad08
+```
+
+The configure step writes `open-source/usrsctp-selection.txt`. Reusing a build
+directory with a different source selection invalidates the previously
+installed usrsctp archive and header instead of silently linking stale files.
 
 For windows builds, you will have to include additional flags for libwebsockets CMake. Add the following flags to your cmake command, or edit the CMake file in ./CMake/Dependencies/libwebsockets-CMakeLists.txt with the following:
 
