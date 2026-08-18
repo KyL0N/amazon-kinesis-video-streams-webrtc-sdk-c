@@ -1225,6 +1225,18 @@ typedef enum {
 } RTC_SCTP_EVENT_TYPE;
 
 /**
+ * Optional high-frequency SCTP notifications exposed to the application.
+ * A zero mask keeps the historical SDK behavior and enables every flag. This
+ * lets existing callers keep source and binary behavior while a throughput
+ * application can omit notifications it does not consume.
+ */
+#define RTC_SCTP_NOTIFICATION_STREAM_RESET (1U << 0U)
+#define RTC_SCTP_NOTIFICATION_SENDER_DRY   (1U << 1U)
+#define RTC_SCTP_NOTIFICATION_SEND_FAILED  (1U << 2U)
+#define RTC_SCTP_NOTIFICATION_ALL                                                                                                    \
+    (RTC_SCTP_NOTIFICATION_STREAM_RESET | RTC_SCTP_NOTIFICATION_SENDER_DRY | RTC_SCTP_NOTIFICATION_SEND_FAILED)
+
+/**
  * Process-wide usrsctp settings. Call configureKvsSctpGlobal before initKvsWebRtc.
  * A zero timer interval preserves the SDK default of 100 ms. Zero send/receive
  * space values preserve the usrsctp defaults.
@@ -1259,6 +1271,7 @@ typedef struct {
     BOOL enableMessageInterleaving;
     RTC_SCTP_CONGESTION_CONTROL congestionControl;
     RTC_SCTP_STREAM_SCHEDULER streamScheduler;
+    UINT32 notificationEventMask;
 } RtcSctpConfiguration, *PRtcSctpConfiguration;
 
 /**

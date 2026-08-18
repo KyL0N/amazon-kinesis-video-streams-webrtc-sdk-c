@@ -1336,6 +1336,7 @@ static STATUS validateSctpConfiguration(PRtcSctpConfiguration pConfiguration)
     CHK(pConfiguration->streamScheduler >= RTC_SCTP_STREAM_SCHEDULER_DEFAULT &&
             pConfiguration->streamScheduler <= RTC_SCTP_STREAM_SCHEDULER_FIRST_COME,
         STATUS_SCTP_CONFIGURATION_INVALID);
+    CHK((pConfiguration->notificationEventMask & ~RTC_SCTP_NOTIFICATION_ALL) == 0, STATUS_SCTP_CONFIGURATION_INVALID);
 
     initialRtoMs = pConfiguration->initialRtoMs == 0 ? SCTP_RTO_INITIAL : pConfiguration->initialRtoMs;
     minRtoMs = pConfiguration->minRtoMs == 0 ? SCTP_RTO_MIN : pConfiguration->minRtoMs;

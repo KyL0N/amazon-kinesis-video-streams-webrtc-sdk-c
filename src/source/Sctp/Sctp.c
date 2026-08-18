@@ -149,11 +149,14 @@ STATUS configureSctpSocket(struct socket* socket, PRtcSctpConfiguration pConfigu
     UINT16 inboundStreams = SCTP_DEFAULT_INBOUND_STREAMS;
     UINT32 congestionControl = SCTP_CC_RFC2581;
     UINT32 streamScheduler = SCTP_SS_DEFAULT;
+    UINT32 notificationEventMask;
     INT32 socketBufferSize;
     struct sctp_assoc_value associationValue;
     UINT16 eventTypes[] = {SCTP_ASSOC_CHANGE,   SCTP_PEER_ADDR_CHANGE,      SCTP_REMOTE_ERROR,
                            SCTP_SHUTDOWN_EVENT, SCTP_ADAPTATION_INDICATION, SCTP_PARTIAL_DELIVERY_EVENT};
     UINT16 extendedEventTypes[] = {SCTP_STREAM_RESET_EVENT, SCTP_SENDER_DRY_EVENT, SCTP_SEND_FAILED_EVENT};
+    UINT32 extendedEventMasks[] =
+        {RTC_SCTP_NOTIFICATION_STREAM_RESET, RTC_SCTP_NOTIFICATION_SENDER_DRY, RTC_SCTP_NOTIFICATION_SEND_FAILED};
 
     CHK(socket != NULL && pConfiguration != NULL, STATUS_NULL_ARG);
 
@@ -191,7 +194,11 @@ STATUS configureSctpSocket(struct socket* socket, PRtcSctpConfiguration pConfigu
         CHK(usrsctp_setsockopt(socket, IPPROTO_SCTP, SCTP_EVENT, &event, SIZEOF(struct sctp_event)) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
     }
     if (enableExtendedNotifications) {
+        notificationEventMask = pConfiguration->notificationEventMask == 0 ? RTC_SCTP_NOTIFICATION_ALL : pConfiguration->notificationEventMask;
         for (i = 0; i < (UINT32) (SIZEOF(extendedEventTypes) / SIZEOF(UINT16)); i++) {
+            if ((notificationEventMask & extendedEventMasks[i]) == 0) {
+                continue;
+            }
             event.se_type = extendedEventTypes[i];
             CHK(usrsctp_setsockopt(socket, IPPROTO_SCTP, SCTP_EVENT, &event, SIZEOF(struct sctp_event)) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
         }
