@@ -4,10 +4,26 @@ project(libusrsctp-download NONE)
 
 include(ExternalProject)
 
+if(KVS_USRSCTP_SOURCE_DIR)
+    set(USRSCTP_DOWNLOAD_ARGS
+        SOURCE_DIR       "${KVS_USRSCTP_SOURCE_DIR}"
+        DOWNLOAD_COMMAND ""
+        UPDATE_COMMAND   "")
+else()
+    if(NOT KVS_USRSCTP_GIT_REPOSITORY)
+        set(KVS_USRSCTP_GIT_REPOSITORY https://github.com/sctplab/usrsctp.git)
+    endif()
+    if(NOT KVS_USRSCTP_GIT_TAG)
+        set(KVS_USRSCTP_GIT_TAG 1ade45cbadfd19298d2c47dc538962d4425ad2dd)
+    endif()
+    set(USRSCTP_DOWNLOAD_ARGS
+        GIT_REPOSITORY ${KVS_USRSCTP_GIT_REPOSITORY}
+        GIT_TAG        ${KVS_USRSCTP_GIT_TAG}
+        GIT_PROGRESS   TRUE)
+endif()
+
 ExternalProject_Add(project_libusrsctp
-    GIT_REPOSITORY    https://github.com/sctplab/usrsctp.git
-    GIT_TAG           1ade45cbadfd19298d2c47dc538962d4425ad2dd
-    GIT_PROGRESS      TRUE
+    ${USRSCTP_DOWNLOAD_ARGS}
     PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/build
     CMAKE_ARGS        -DCMAKE_INSTALL_PREFIX=${OPEN_SRC_INSTALL_PREFIX}
                       -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
