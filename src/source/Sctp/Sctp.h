@@ -135,6 +135,10 @@ typedef struct {
     volatile SIZE_T inboundZeroChecksumPackets;
     volatile SIZE_T outboundSctpPackets;
     volatile SIZE_T outboundZeroChecksumPackets;
+    volatile SIZE_T inboundSctpBytes;
+    volatile SIZE_T outboundSctpBytes;
+    volatile SIZE_T inboundSmallSctpPackets;
+    volatile SIZE_T outboundSmallSctpPackets;
     struct socket* socket;
     SctpSessionCallbacks sctpSessionCallbacks;
     TIMER_QUEUE_HANDLE timerQueueHandle;
@@ -144,6 +148,7 @@ typedef struct {
     BOOL internalTimerThread;
     BOOL zeroChecksumRequested;
     BOOL zeroChecksumPacketMetrics;
+    BOOL smallPacketCoalescing;
 } SctpSession, *PSctpSession;
 
 STATUS initSctpSession();

@@ -52,6 +52,30 @@ TEST_F(DtlsApiTest, dtlsSessionCreated_RefCount)
     timerQueueFree(&timerQueueHandle);
 }
 
+TEST_F(DtlsApiTest, dtlsSessionMetricsReportConfiguredCipherPolicy)
+{
+    DtlsSessionCallbacks callbacks{};
+    DtlsSessionOptions options{};
+    RtcDtlsMetrics metrics{};
+    PDtlsSession pSession = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+
+    options.cipherPolicy = RTC_DTLS_CIPHER_POLICY_AES_128_GCM_ONLY;
+    ASSERT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    ASSERT_EQ(STATUS_SUCCESS,
+              createDtlsSessionWithOptions(&callbacks, timerQueueHandle, 0, FALSE, NULL, &options, &pSession));
+    EXPECT_EQ(STATUS_NULL_ARG, dtlsSessionGetMetrics(NULL, &metrics));
+    EXPECT_EQ(STATUS_NULL_ARG, dtlsSessionGetMetrics(pSession, NULL));
+    ASSERT_EQ(STATUS_SUCCESS, dtlsSessionGetMetrics(pSession, &metrics));
+    EXPECT_EQ(RTC_DTLS_METRICS_CURRENT_VERSION, metrics.version);
+    EXPECT_EQ(RTC_DTLS_CIPHER_POLICY_AES_128_GCM_ONLY, metrics.configuredCipherPolicy);
+    EXPECT_EQ(FALSE, metrics.handshakeComplete);
+    EXPECT_STREQ("", metrics.negotiatedCipher);
+
+    freeDtlsSession(&pSession);
+    timerQueueFree(&timerQueueHandle);
+}
+
 TEST_F(DtlsApiTest, dtlsProcessPacket_Api_Check)
 {
     DtlsSessionCallbacks callbacks;

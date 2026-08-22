@@ -789,6 +789,8 @@ extern "C" {
 #define RTC_SCTP_CONFIGURATION_CURRENT_VERSION        0
 #define RTC_SCTP_EVENT_CURRENT_VERSION                0
 #define RTC_SCTP_METRICS_CURRENT_VERSION              0
+#define RTC_DTLS_METRICS_CURRENT_VERSION              0
+#define RTC_SCTP_SMALL_PACKET_THRESHOLD_BYTES         512U
 
 /*!@} */
 
@@ -1212,6 +1214,19 @@ typedef enum {
     RTC_SCTP_STREAM_SCHEDULER_FIRST_COME,
 } RTC_SCTP_STREAM_SCHEDULER;
 
+/** DTLS 1.2 cipher selection for WebRTC transports. */
+typedef enum {
+    RTC_DTLS_CIPHER_POLICY_DEFAULT = 0,
+    /**
+     * Restrict negotiation to the WebRTC AES-128-GCM ECDHE suites. This makes
+     * the lower-cost AES-128 hardware path deterministic on AES/PMULL-capable
+     * ARM64 CPUs instead of leaving the result to the broad OpenSSL HIGH list.
+     */
+    RTC_DTLS_CIPHER_POLICY_AES_128_GCM_ONLY,
+} RTC_DTLS_CIPHER_POLICY;
+
+#define RTC_DTLS_CIPHER_NAME_MAX_LEN 64
+
 typedef enum {
     RTC_SCTP_EVENT_ASSOCIATION_CHANGE = 0,
     RTC_SCTP_EVENT_PEER_ADDRESS_CHANGE,
@@ -1282,8 +1297,18 @@ typedef struct {
      * the association continues to use CRC32C. Disabled by default.
      */
     BOOL enableZeroChecksum;
-    /** Enable per-packet diagnostic counters for zero-checksum A/B tests. */
+    /**
+     * Enable per-packet checksum, byte, and sub-512-byte packet counters for
+     * diagnostic A/B tests. Disabled by default because it adds atomics to the
+     * packet path.
+     */
     BOOL enableZeroChecksumPacketMetrics;
+    /**
+     * Clear SCTP_NODELAY for a workload-specific coalescing experiment.
+     * usrsctp is not guaranteed to merge the writes, and a final sparse write
+     * may be delayed. Disabled by default to preserve DataChannel latency.
+     */
+    BOOL enableSmallPacketCoalescing;
 } RtcSctpConfiguration, *PRtcSctpConfiguration;
 
 /**
@@ -1346,7 +1371,34 @@ typedef struct {
     UINT64 inboundZeroChecksumPackets;
     UINT64 outboundSctpPackets;
     UINT64 outboundZeroChecksumPackets;
+    UINT64 inboundSctpBytes;
+    UINT64 outboundSctpBytes;
+    UINT64 inboundSmallSctpPackets;
+    UINT64 outboundSmallSctpPackets;
+    UINT32 smallPacketThresholdBytes;
+    BOOL smallPacketCoalescing;
+    /**
+     * Process-wide diagnostic counters exposed by the KyL0N usrsctp fork.
+     * These remain zero when the SDK is built against upstream usrsctp or
+     * when sctp_fast_path_stats is disabled.
+     */
+    UINT32 usrsctpFastPathFeatures;
+    UINT64 usrsctpOutputScratchPackets;
+    UINT64 usrsctpOutputScratchBytes;
+    UINT64 usrsctpOutputHeapPackets;
+    UINT64 usrsctpOutputHeapBytes;
+    UINT64 usrsctpInputBorrowedSackPackets;
+    UINT64 usrsctpInputBorrowedSackBytes;
+    UINT64 usrsctpInputCopiedPackets;
+    UINT64 usrsctpInputCopiedBytes;
 } RtcSctpMetrics, *PRtcSctpMetrics;
+
+typedef struct {
+    UINT32 version;
+    RTC_DTLS_CIPHER_POLICY configuredCipherPolicy;
+    BOOL handshakeComplete;
+    CHAR negotiatedCipher[RTC_DTLS_CIPHER_NAME_MAX_LEN];
+} RtcDtlsMetrics, *PRtcDtlsMetrics;
 
 /**
  * These callbacks run in the usrsctp packet/timer processing path. They must
@@ -1473,6 +1525,16 @@ typedef struct __RtcDataChannel {
                //!< set by the peer connection's createDataChannel() call or the channel id is set in createDataChannel()
                //!< on embedded end.
 } RtcDataChannel, *PRtcDataChannel;
+
+#define RTC_DATA_CHANNEL_MAX_SEND_BATCH_MESSAGES 16U
+
+/** One DataChannel message submitted through dataChannelSendBatch. */
+typedef struct {
+    PRtcDataChannel pDataChannel;
+    BOOL isBinary;
+    PBYTE pMessage;
+    UINT32 messageLen;
+} RtcDataChannelMessage, *PRtcDataChannelMessage;
 
 /**
  * @brief RtcOnMessage is fired when a message is received for the DataChannel
@@ -1641,6 +1703,9 @@ typedef struct {
     BOOL disableSenderSideBandwidthEstimation; //!< Disable TWCC feedback based sender bandwidth estimation, enabled by default.
                                                //!< You want to set this to TRUE if you are on a very stable connection and want to save 1.2MB of
                                                //!< memory
+
+    /** DTLS cipher policy. Zero preserves the historical OpenSSL list. */
+    RTC_DTLS_CIPHER_POLICY dtlsCipherPolicy;
 #ifdef ENABLE_STATS_CALCULATION_CONTROL
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined
                          //!< to use this member, else stats are enabled by default.
@@ -2088,6 +2153,9 @@ PUBLIC_API STATUS peerConnectionOnSctpWritable(PRtcPeerConnection, UINT64, RtcOn
 /** Read a snapshot of the current SCTP association and SDK-side send counters. */
 PUBLIC_API STATUS rtcPeerConnectionGetSctpMetrics(PRtcPeerConnection, PRtcSctpMetrics);
 
+/** Read the configured DTLS cipher policy and negotiated cipher. */
+PUBLIC_API STATUS rtcPeerConnectionGetDtlsMetrics(PRtcPeerConnection, PRtcDtlsMetrics);
+
 /**
  * @brief Free a RtcPeerConnection
  *
@@ -2519,6 +2587,15 @@ PUBLIC_API STATUS dataChannelOnOpen(PRtcDataChannel, UINT64, RtcOnOpen);
  *
  */
 PUBLIC_API STATUS dataChannelSend(PRtcDataChannel, BOOL, PBYTE, UINT32);
+
+/**
+ * @brief Submit messages for one PeerConnection under one bounded transport
+ * batch. Message boundaries, stream ids, PPIDs, and reliability settings are
+ * preserved. A call accepts at most RTC_DATA_CHANNEL_MAX_SEND_BATCH_MESSAGES.
+ * On failure, pMessagesSent reports the accepted prefix so callers can retry
+ * only the first unsent message.
+ */
+PUBLIC_API STATUS dataChannelSendBatch(PRtcDataChannelMessage, UINT32, PUINT32);
 
 /**
  * @brief Use the process described in https://tools.ietf.org/html/rfc5780#section-4.3 to

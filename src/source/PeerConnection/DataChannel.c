@@ -58,35 +58,69 @@ CleanUp:
 
 STATUS dataChannelSend(PRtcDataChannel pRtcDataChannel, BOOL isBinary, PBYTE pMessage, UINT32 pMessageLen)
 {
+    RtcDataChannelMessage message;
+    UINT32 messagesSent = 0;
+
+    message.pDataChannel = pRtcDataChannel;
+    message.isBinary = isBinary;
+    message.pMessage = pMessage;
+    message.messageLen = pMessageLen;
+    return dataChannelSendBatch(&message, 1, &messagesSent);
+}
+
+STATUS dataChannelSendBatch(PRtcDataChannelMessage pMessages, UINT32 messageCount, PUINT32 pMessagesSent)
+{
     STATUS retStatus = STATUS_SUCCESS;
     STATUS batchStatus = STATUS_SUCCESS;
-    PSctpSession pSctpSession = NULL;
-    PKvsDataChannel pKvsDataChannel = (PKvsDataChannel) pRtcDataChannel;
     PKvsPeerConnection pKvsPeerConnection = NULL;
     BOOL transportBatchActive = FALSE;
+    UINT32 i;
 
-    CHK(pKvsDataChannel != NULL && pMessage != NULL, STATUS_NULL_ARG);
+    CHK(pMessagesSent != NULL, STATUS_NULL_ARG);
+    *pMessagesSent = 0;
+    CHK(pMessages != NULL, STATUS_NULL_ARG);
+    CHK(messageCount > 0 && messageCount <= RTC_DATA_CHANNEL_MAX_SEND_BATCH_MESSAGES, STATUS_INVALID_ARG);
 
-    pKvsPeerConnection = (PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection;
-    pSctpSession = pKvsPeerConnection->pSctpSession;
+    // Validate the whole batch before accepting any prefix. Every message must
+    // belong to the same SCTP association because the write gate and UDP batch
+    // are PeerConnection-owned.
+    for (i = 0; i < messageCount; ++i) {
+        PKvsDataChannel pKvsDataChannel = (PKvsDataChannel) pMessages[i].pDataChannel;
+        PKvsPeerConnection pMessagePeerConnection;
+        CHK(pKvsDataChannel != NULL && pMessages[i].pMessage != NULL, STATUS_NULL_ARG);
+        pMessagePeerConnection = (PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection;
+        CHK(pMessagePeerConnection != NULL && pMessagePeerConnection->pSctpSession != NULL, STATUS_INVALID_OPERATION);
+        if (pKvsPeerConnection == NULL) {
+            pKvsPeerConnection = pMessagePeerConnection;
+        } else {
+            CHK(pKvsPeerConnection == pMessagePeerConnection, STATUS_INVALID_ARG);
+        }
+    }
 
     // This association-wide batch scope is also the public DataChannel write
     // gate. Concurrent callers are serialized before entering usrsctp, while
-    // the call-local sendv metadata in sctpSessionWriteMessage keeps stream and
-    // partial-reliability fields isolated.
+    // every write retains call-local stream and partial-reliability metadata.
     CHK_STATUS(transportPacketBatchBegin(pKvsPeerConnection->pTransportPacketBatch));
     transportBatchActive = TRUE;
-    CHK_STATUS(sctpSessionWriteMessage(pSctpSession, pKvsDataChannel->channelId, isBinary, pMessage, pMessageLen,
-                                       &pKvsDataChannel->rtcDataChannelInit));
+    for (i = 0; i < messageCount; ++i) {
+        PKvsDataChannel pKvsDataChannel = (PKvsDataChannel) pMessages[i].pDataChannel;
+        CHK_STATUS(sctpSessionWriteMessage(pKvsPeerConnection->pSctpSession, pKvsDataChannel->channelId, pMessages[i].isBinary,
+                                           pMessages[i].pMessage, pMessages[i].messageLen, &pKvsDataChannel->rtcDataChannelInit));
+        pKvsDataChannel->rtcDataChannelDiagnostics.messagesSent++;
+        pKvsDataChannel->rtcDataChannelDiagnostics.bytesSent += pMessages[i].messageLen;
+        ++(*pMessagesSent);
+    }
     batchStatus = transportPacketBatchEnd(pKvsPeerConnection->pTransportPacketBatch, pKvsPeerConnection->pIceAgent);
     transportBatchActive = FALSE;
     CHK_STATUS(batchStatus);
-    pKvsDataChannel->rtcDataChannelDiagnostics.messagesSent++;
-    pKvsDataChannel->rtcDataChannelDiagnostics.bytesSent += pMessageLen;
 CleanUp:
-
     if (transportBatchActive) {
-        CHK_LOG_ERR(transportPacketBatchEnd(pKvsPeerConnection->pTransportPacketBatch, pKvsPeerConnection->pIceAgent));
+        batchStatus = transportPacketBatchEnd(pKvsPeerConnection->pTransportPacketBatch, pKvsPeerConnection->pIceAgent);
+        if (STATUS_SUCCEEDED(retStatus)) {
+            retStatus = batchStatus;
+        } else {
+            CHK_LOG_ERR(batchStatus);
+        }
     }
 
     return retStatus;

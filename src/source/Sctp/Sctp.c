@@ -147,7 +147,7 @@ STATUS configureSctpSocket(struct socket* socket, PRtcSctpConfiguration pConfigu
     struct linger linger_opt;
     struct sctp_event event;
     UINT32 i;
-    UINT32 valueOn = 1;
+    UINT32 valueOn;
     UINT32 fragmentInterleave = SCTP_FRAG_LEVEL_2;
     UINT16 outboundStreams = SCTP_DEFAULT_OUTBOUND_STREAMS;
     UINT16 inboundStreams = SCTP_DEFAULT_INBOUND_STREAMS;
@@ -172,8 +172,9 @@ STATUS configureSctpSocket(struct socket* socket, PRtcSctpConfiguration pConfigu
     linger_opt.l_linger = 0;
     CHK(usrsctp_setsockopt(socket, SOL_SOCKET, SO_LINGER, &linger_opt, SIZEOF(linger_opt)) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
 
-    // packets are generally sent as soon as possible and no unnecessary
-    // delays are introduced, at the cost of more packets in the network.
+    // DataChannel historically disables Nagle. The lab can clear NODELAY for
+    // a workload-specific experiment; usrsctp may still emit identical packets.
+    valueOn = pConfiguration->enableSmallPacketCoalescing ? 0U : 1U;
     CHK(usrsctp_setsockopt(socket, IPPROTO_SCTP, SCTP_NODELAY, &valueOn, SIZEOF(valueOn)) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
 
     if (pConfiguration->enableZeroChecksum) {
@@ -391,6 +392,7 @@ STATUS createSctpSession(PSctpSessionCallbacks pSctpSessionCallbacks, PRtcSctpCo
     pSctpSession->internalTimerThread = globalConfiguration.useInternalTimerThread;
     pSctpSession->zeroChecksumRequested = configuration.enableZeroChecksum;
     pSctpSession->zeroChecksumPacketMetrics = configuration.enableZeroChecksumPacketMetrics;
+    pSctpSession->smallPacketCoalescing = configuration.enableSmallPacketCoalescing;
 
     CHK_STATUS(initSctpAddrConn(pSctpSession, &localConn));
     CHK_STATUS(initSctpAddrConn(pSctpSession, &remoteConn));
@@ -411,13 +413,23 @@ STATUS createSctpSession(PSctpSessionCallbacks pSctpSessionCallbacks, PRtcSctpCo
 
     CHK(usrsctp_bind(pSctpSession->socket, (struct sockaddr*) &localConn, SIZEOF(localConn)) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
 
-    connectStatus = usrsctp_connect(pSctpSession->socket, (struct sockaddr*) &remoteConn, SIZEOF(remoteConn));
-    CHK(connectStatus >= 0 || errno == EINPROGRESS, STATUS_SCTP_SESSION_SETUP_FAILED);
-
     memcpy(&params.spp_address, &remoteConn, SIZEOF(remoteConn));
     params.spp_flags = SPP_PMTUD_DISABLE;
     params.spp_pathmtu = configuration.pathMtu == 0 ? SCTP_MTU : configuration.pathMtu;
     params.spp_pathmaxrxt = configuration.pathMaxRetransmits == 0 ? SCTP_MAX_PATH_RETRANSMITS : configuration.pathMaxRetransmits;
+
+    // AF_CONN starts a new association with usrsctp's conservative 1280-byte
+    // userspace MTU. Applying only after connect can lower smallest_mtu, but
+    // it cannot raise it. Seed the future association before connect so an
+    // explicitly configured LAN MTU actually controls SCTP fragmentation.
+    CHK(usrsctp_setsockopt(pSctpSession->socket, IPPROTO_SCTP, SCTP_PEER_ADDR_PARAMS, &params, SIZEOF(params)) == 0,
+        STATUS_SCTP_SESSION_SETUP_FAILED);
+
+    connectStatus = usrsctp_connect(pSctpSession->socket, (struct sockaddr*) &remoteConn, SIZEOF(remoteConn));
+    CHK(connectStatus >= 0 || errno == EINPROGRESS, STATUS_SCTP_SESSION_SETUP_FAILED);
+
+    // Reapply to the connected path so path-specific flags and retransmission
+    // limits match the future-association defaults above.
     CHK(usrsctp_setsockopt(pSctpSession->socket, IPPROTO_SCTP, SCTP_PEER_ADDR_PARAMS, &params, SIZEOF(params)) == 0,
         STATUS_SCTP_SESSION_SETUP_FAILED);
 
@@ -630,6 +642,10 @@ INT32 onSctpOutboundPacket(PVOID addr, PVOID data, ULONG length, UINT8 tos, UINT
 
     if (pSctpSession->zeroChecksumPacketMetrics) {
         ATOMIC_INCREMENT(&pSctpSession->outboundSctpPackets);
+        ATOMIC_ADD(&pSctpSession->outboundSctpBytes, (SIZE_T) length);
+        if (length < RTC_SCTP_SMALL_PACKET_THRESHOLD_BYTES) {
+            ATOMIC_INCREMENT(&pSctpSession->outboundSmallSctpPackets);
+        }
         if (length >= SCTP_COMMON_HEADER_LENGTH &&
             ((PBYTE) data)[SCTP_CHECKSUM_OFFSET] == 0 && ((PBYTE) data)[SCTP_CHECKSUM_OFFSET + 1] == 0 &&
             ((PBYTE) data)[SCTP_CHECKSUM_OFFSET + 2] == 0 && ((PBYTE) data)[SCTP_CHECKSUM_OFFSET + 3] == 0) {
@@ -650,6 +666,10 @@ STATUS putSctpPacket(PSctpSession pSctpSession, PBYTE buf, UINT32 bufLen)
     CHK(pSctpSession != NULL && buf != NULL, STATUS_NULL_ARG);
     if (pSctpSession->zeroChecksumPacketMetrics) {
         ATOMIC_INCREMENT(&pSctpSession->inboundSctpPackets);
+        ATOMIC_ADD(&pSctpSession->inboundSctpBytes, (SIZE_T) bufLen);
+        if (bufLen < RTC_SCTP_SMALL_PACKET_THRESHOLD_BYTES) {
+            ATOMIC_INCREMENT(&pSctpSession->inboundSmallSctpPackets);
+        }
         if (bufLen >= SCTP_COMMON_HEADER_LENGTH &&
             buf[SCTP_CHECKSUM_OFFSET] == 0 && buf[SCTP_CHECKSUM_OFFSET + 1] == 0 &&
             buf[SCTP_CHECKSUM_OFFSET + 2] == 0 && buf[SCTP_CHECKSUM_OFFSET + 3] == 0) {
@@ -875,6 +895,9 @@ STATUS sctpSessionGetMetrics(PSctpSession pSctpSession, PRtcSctpMetrics pMetrics
     struct sctp_paddrparams pathParams;
     struct sctp_assoc_value associationValue;
     struct sctp_sack_info sackInfo;
+#if defined(USRSCTP_SENDER_FAST_PATH_STATS_VERSION)
+    struct usrsctp_sender_fast_path_stats fastPathStats;
+#endif
     INT32 socketBufferSize = 0;
     INT32 events;
     socklen_t optionLength;
@@ -1011,6 +1034,27 @@ STATUS sctpSessionGetMetrics(PSctpSession pSctpSession, PRtcSctpMetrics pMetrics
     pMetrics->inboundZeroChecksumPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->inboundZeroChecksumPackets);
     pMetrics->outboundSctpPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->outboundSctpPackets);
     pMetrics->outboundZeroChecksumPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->outboundZeroChecksumPackets);
+    pMetrics->inboundSctpBytes = (UINT64) ATOMIC_LOAD(&pSctpSession->inboundSctpBytes);
+    pMetrics->outboundSctpBytes = (UINT64) ATOMIC_LOAD(&pSctpSession->outboundSctpBytes);
+    pMetrics->inboundSmallSctpPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->inboundSmallSctpPackets);
+    pMetrics->outboundSmallSctpPackets = (UINT64) ATOMIC_LOAD(&pSctpSession->outboundSmallSctpPackets);
+    pMetrics->smallPacketThresholdBytes = RTC_SCTP_SMALL_PACKET_THRESHOLD_BYTES;
+    pMetrics->smallPacketCoalescing = pSctpSession->smallPacketCoalescing;
+#if defined(USRSCTP_SENDER_FAST_PATH_STATS_VERSION)
+    // The fork counters are process-wide. This SDK currently initializes one
+    // usrsctp context per process, which makes them suitable for lab A/B runs.
+    MEMSET(&fastPathStats, 0, SIZEOF(fastPathStats));
+    usrsctp_get_sender_fast_path_stats(&fastPathStats);
+    pMetrics->usrsctpFastPathFeatures = fastPathStats.features;
+    pMetrics->usrsctpOutputScratchPackets = fastPathStats.output_scratch_packets;
+    pMetrics->usrsctpOutputScratchBytes = fastPathStats.output_scratch_bytes;
+    pMetrics->usrsctpOutputHeapPackets = fastPathStats.output_heap_packets;
+    pMetrics->usrsctpOutputHeapBytes = fastPathStats.output_heap_bytes;
+    pMetrics->usrsctpInputBorrowedSackPackets = fastPathStats.input_borrowed_sack_packets;
+    pMetrics->usrsctpInputBorrowedSackBytes = fastPathStats.input_borrowed_sack_bytes;
+    pMetrics->usrsctpInputCopiedPackets = fastPathStats.input_copied_packets;
+    pMetrics->usrsctpInputCopiedBytes = fastPathStats.input_copied_bytes;
+#endif
 
 CleanUp:
     CHK_LOG_ERR(retStatus);

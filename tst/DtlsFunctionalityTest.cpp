@@ -8,7 +8,8 @@ namespace webrtcclient {
 
 class DtlsFunctionalityTest : public WebRtcClientTestBase {
   public:
-    STATUS createAndConnect(TIMER_QUEUE_HANDLE timerQueueHandle, PDtlsSession* ppClient, PDtlsSession* ppServer, BOOL useThread)
+    STATUS createAndConnect(TIMER_QUEUE_HANDLE timerQueueHandle, PDtlsSession* ppClient, PDtlsSession* ppServer, BOOL useThread,
+                            RTC_DTLS_CIPHER_POLICY cipherPolicy = RTC_DTLS_CIPHER_POLICY_DEFAULT)
     {
         struct Context {
             std::mutex mtx;
@@ -21,6 +22,7 @@ class DtlsFunctionalityTest : public WebRtcClientTestBase {
         UINT64 sleepDelay = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
         Context clientCtx, serverCtx;
         std::thread dtlsClientThread, dtlsServerThread;
+        DtlsSessionOptions options{};
 
         MEMSET(&callbacks, 0, SIZEOF(callbacks));
         callbacks.stateChangeFn = [](UINT64 customData, RTC_DTLS_TRANSPORT_STATE state) {
@@ -63,8 +65,9 @@ class DtlsFunctionalityTest : public WebRtcClientTestBase {
             return retStatus;
         };
 
-        CHK_STATUS(createDtlsSession(&callbacks, timerQueueHandle, 0, FALSE, NULL, &pServer));
-        CHK_STATUS(createDtlsSession(&callbacks, timerQueueHandle, 0, FALSE, NULL, &pClient));
+        options.cipherPolicy = cipherPolicy;
+        CHK_STATUS(createDtlsSessionWithOptions(&callbacks, timerQueueHandle, 0, FALSE, NULL, &options, &pServer));
+        CHK_STATUS(createDtlsSessionWithOptions(&callbacks, timerQueueHandle, 0, FALSE, NULL, &options, &pClient));
 
         CHK_STATUS(dtlsSessionOnOutBoundData(pServer, (UINT64) &clientCtx, outboundPacketFn));
         CHK_STATUS(dtlsSessionOnOutBoundData(pClient, (UINT64) &serverCtx, outboundPacketFn));
@@ -123,6 +126,30 @@ VOID outboundPacketFnNoop(UINT64 customData, PBYTE pData, UINT32 dataLen)
     UNUSED_PARAM(pData);
     UNUSED_PARAM(dataLen);
 }
+
+#ifdef KVS_USE_OPENSSL
+TEST_F(DtlsFunctionalityTest, aes128GcmOnlyNegotiatesExpectedCipher)
+{
+    PDtlsSession pClient = NULL, pServer = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+    RtcDtlsMetrics clientMetrics{}, serverMetrics{};
+
+    ASSERT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    ASSERT_EQ(STATUS_SUCCESS,
+              createAndConnect(timerQueueHandle, &pClient, &pServer, FALSE,
+                               RTC_DTLS_CIPHER_POLICY_AES_128_GCM_ONLY));
+    ASSERT_EQ(STATUS_SUCCESS, dtlsSessionGetMetrics(pClient, &clientMetrics));
+    ASSERT_EQ(STATUS_SUCCESS, dtlsSessionGetMetrics(pServer, &serverMetrics));
+    EXPECT_EQ(TRUE, clientMetrics.handshakeComplete);
+    EXPECT_EQ(TRUE, serverMetrics.handshakeComplete);
+    EXPECT_STREQ("ECDHE-ECDSA-AES128-GCM-SHA256", clientMetrics.negotiatedCipher);
+    EXPECT_STREQ("ECDHE-ECDSA-AES128-GCM-SHA256", serverMetrics.negotiatedCipher);
+
+    freeDtlsSession(&pClient);
+    freeDtlsSession(&pServer);
+    timerQueueFree(&timerQueueHandle);
+}
+#endif
 
 TEST_F(DtlsFunctionalityTest, putApplicationDataWithVariedSizes)
 {
@@ -268,7 +295,7 @@ TEST_F(DtlsFunctionalityTest, strictServerValidationRejectsUntrustedServerCertif
     PacketContext clientInboundCtx, serverInboundCtx;
     SessionState serverState, clientState;
     CHAR expectedServerHostname[] = "stun.kinesisvideo-fips.us-gov-west-1.amazonaws.com";
-    DtlsSessionOptions strictOptions;
+    DtlsSessionOptions strictOptions{};
 
     MEMSET(&serverCallbacks, 0x00, SIZEOF(serverCallbacks));
     MEMSET(&clientCallbacks, 0x00, SIZEOF(clientCallbacks));

@@ -9,6 +9,22 @@ namespace webrtcclient {
 
 class DataChannelApiTest : public WebRtcClientTestBase {};
 
+TEST_F(DataChannelApiTest, dataChannelSendBatch_ValidatesArgumentsBeforeSending)
+{
+    RtcDataChannelMessage message{};
+    UINT32 messagesSent = 99;
+
+    EXPECT_EQ(dataChannelSendBatch(nullptr, 1, &messagesSent), STATUS_NULL_ARG);
+    EXPECT_EQ(messagesSent, 0U);
+    EXPECT_EQ(dataChannelSendBatch(&message, 0, &messagesSent), STATUS_INVALID_ARG);
+    EXPECT_EQ(messagesSent, 0U);
+    EXPECT_EQ(dataChannelSendBatch(&message, RTC_DATA_CHANNEL_MAX_SEND_BATCH_MESSAGES + 1, &messagesSent), STATUS_INVALID_ARG);
+    EXPECT_EQ(messagesSent, 0U);
+    EXPECT_EQ(dataChannelSendBatch(&message, 1, nullptr), STATUS_NULL_ARG);
+    EXPECT_EQ(dataChannelSendBatch(&message, 1, &messagesSent), STATUS_NULL_ARG);
+    EXPECT_EQ(messagesSent, 0U);
+}
+
 TEST_F(DataChannelApiTest, createDataChannel_Disconnected)
 {
     RtcConfiguration configuration;

@@ -83,6 +83,7 @@ typedef enum {
 typedef struct {
     DTLS_SESSION_VALIDATION_MODE validationMode;
     PCHAR pExpectedServerHostname;
+    RTC_DTLS_CIPHER_POLICY cipherPolicy;
 } DtlsSessionOptions, *PDtlsSessionOptions;
 
 // DtlsKeyingMaterial is information extracted via https://tools.ietf.org/html/rfc5705
@@ -141,6 +142,7 @@ struct __DtlsSession {
     volatile ATOMIC_BOOL remoteCertVerificationFailed;
     DTLS_SESSION_VALIDATION_MODE validationMode;
     PCHAR pExpectedServerHostname;
+    RTC_DTLS_CIPHER_POLICY configuredCipherPolicy;
 
 #ifdef KVS_USE_OPENSSL
     volatile ATOMIC_BOOL sslInitFinished;
@@ -200,6 +202,7 @@ STATUS dtlsSessionProcessPacket(PDtlsSession, PBYTE, PINT32);
 STATUS dtlsSessionIsInitFinished(PDtlsSession, PBOOL);
 STATUS dtlsSessionPopulateKeyingMaterial(PDtlsSession, PDtlsKeyingMaterial);
 STATUS dtlsSessionGetLocalCertificateFingerprint(PDtlsSession, PCHAR, UINT32);
+STATUS dtlsSessionGetMetrics(PDtlsSession, PRtcDtlsMetrics);
 STATUS dtlsSessionVerifyRemoteCertificateFingerprint(PDtlsSession, PCHAR);
 STATUS dtlsSessionPutApplicationData(PDtlsSession, PBYTE, INT32);
 STATUS dtlsSessionShutdown(PDtlsSession);
@@ -226,7 +229,7 @@ STATUS dtlsGenerateCertificateFingerprints(PDtlsSession, PDtlsSessionCertificate
 STATUS createCertificateAndKey(INT32, BOOL, X509** ppCert, EVP_PKEY** ppPkey);
 STATUS freeCertificateAndKey(X509** ppCert, EVP_PKEY** ppPkey);
 STATUS dtlsValidateRtcCertificates(PRtcCertificate, PUINT32);
-STATUS createSslCtx(PDtlsSessionCertificateInfo, UINT32, SSL_CTX**);
+STATUS createSslCtx(PDtlsSessionCertificateInfo, UINT32, RTC_DTLS_CIPHER_POLICY, SSL_CTX**);
 #elif KVS_USE_MBEDTLS
 STATUS dtlsCertificateFingerprint(mbedtls_x509_crt*, PCHAR);
 STATUS copyCertificateAndKey(mbedtls_x509_crt*, mbedtls_pk_context*, PDtlsSessionCertificateInfo, mbedtls_ctr_drbg_context*);

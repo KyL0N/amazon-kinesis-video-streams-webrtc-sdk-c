@@ -40,6 +40,9 @@ ExternalProject_Add(project_libusrsctp
                       "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS} -fPIC"
                       -Dsctp_werror=0
                       -Dsctp_build_programs=0
+                      -Dsctp_af_conn_output_scratch=${KVS_USRSCTP_AF_CONN_OUTPUT_SCRATCH}
+                      -Dsctp_borrow_sack_input=${KVS_USRSCTP_BORROW_SACK_INPUT}
+                      -Dsctp_fast_path_stats=${KVS_USRSCTP_FAST_PATH_STATS}
                       ${USRSCTP_CMAKE_POLICY_ARGS}
     BUILD_ALWAYS      TRUE
     TEST_COMMAND      ""

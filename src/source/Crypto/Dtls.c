@@ -95,10 +95,18 @@ STATUS dtlsSessionCopyOptions(PDtlsSession pDtlsSession, PDtlsSessionOptions pDt
 
     pDtlsSession->validationMode = DTLS_SESSION_VALIDATION_MODE_RELAXED;
     pDtlsSession->pExpectedServerHostname = NULL;
+    pDtlsSession->configuredCipherPolicy = RTC_DTLS_CIPHER_POLICY_DEFAULT;
 
     CHK(pDtlsSessionOptions != NULL, retStatus);
 
     pDtlsSession->validationMode = pDtlsSessionOptions->validationMode;
+    CHK(pDtlsSessionOptions->cipherPolicy <= RTC_DTLS_CIPHER_POLICY_AES_128_GCM_ONLY, STATUS_INVALID_ARG);
+#ifdef KVS_USE_MBEDTLS
+    /* The lab's accelerated path is OpenSSL-backed. Do not silently accept a
+     * cipher policy that this backend does not enforce. */
+    CHK(pDtlsSessionOptions->cipherPolicy == RTC_DTLS_CIPHER_POLICY_DEFAULT, STATUS_NOT_IMPLEMENTED);
+#endif
+    pDtlsSession->configuredCipherPolicy = pDtlsSessionOptions->cipherPolicy;
     if (pDtlsSession->validationMode == DTLS_SESSION_VALIDATION_MODE_STRICT_SERVER) {
         CHK(pDtlsSessionOptions->pExpectedServerHostname != NULL && pDtlsSessionOptions->pExpectedServerHostname[0] != '\0', STATUS_INVALID_ARG);
         hostnameLen = (UINT32) STRLEN(pDtlsSessionOptions->pExpectedServerHostname);

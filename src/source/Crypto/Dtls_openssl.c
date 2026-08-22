@@ -1,6 +1,21 @@
 #define LOG_CLASS "DTLS_openssl"
 #include "../Include_i.h"
 
+#define DTLS_DEFAULT_CIPHER_LIST "HIGH:!aNULL:!MD5:!RC4"
+#define DTLS_AES_128_GCM_CIPHERS                                                                                                      \
+    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+
+static PCHAR dtlsCipherListForPolicy(RTC_DTLS_CIPHER_POLICY policy)
+{
+    switch (policy) {
+        case RTC_DTLS_CIPHER_POLICY_AES_128_GCM_ONLY:
+            return (PCHAR) DTLS_AES_128_GCM_CIPHERS;
+        case RTC_DTLS_CIPHER_POLICY_DEFAULT:
+        default:
+            return (PCHAR) DTLS_DEFAULT_CIPHER_LIST;
+    }
+}
+
 INT32 dtlsCertificateVerifyCallback(INT32 preverify_ok, X509_STORE_CTX* ctx)
 {
     SSL* pSsl = NULL;
@@ -276,16 +291,21 @@ CleanUp:
     return retStatus;
 }
 
-STATUS createSslCtx(PDtlsSessionCertificateInfo pCertificates, UINT32 certCount, SSL_CTX** ppSslCtx)
+STATUS createSslCtx(PDtlsSessionCertificateInfo pCertificates, UINT32 certCount, RTC_DTLS_CIPHER_POLICY configuredCipherPolicy,
+                    SSL_CTX** ppSslCtx)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
     SSL_CTX* pSslCtx = NULL;
     EC_KEY* pEcKey = NULL;
     UINT32 i;
+    PCHAR pCipherList;
 
     CHK(pCertificates != NULL && ppSslCtx != NULL, STATUS_NULL_ARG);
     CHK(certCount > 0, STATUS_INTERNAL_ERROR);
+    CHK(configuredCipherPolicy <= RTC_DTLS_CIPHER_POLICY_AES_128_GCM_ONLY, STATUS_INVALID_ARG);
+
+    pCipherList = dtlsCipherListForPolicy(configuredCipherPolicy);
 
     // Version less than 1.0.2
 #if (OPENSSL_VERSION_NUMBER < 0x10002000L)
@@ -322,7 +342,12 @@ STATUS createSslCtx(PDtlsSessionCertificateInfo pCertificates, UINT32 certCount,
         CHK(SSL_CTX_use_PrivateKey(pSslCtx, pCertificates[i].pKey) == 1 || SSL_CTX_check_private_key(pSslCtx) == 1, STATUS_SSL_CTX_CREATION_FAILED);
     }
 
-    CHK(SSL_CTX_set_cipher_list(pSslCtx, "HIGH:!aNULL:!MD5:!RC4") == 1, STATUS_SSL_CTX_CREATION_FAILED);
+    CHK(SSL_CTX_set_cipher_list(pSslCtx, pCipherList) == 1, STATUS_SSL_CTX_CREATION_FAILED);
+    if (configuredCipherPolicy != RTC_DTLS_CIPHER_POLICY_DEFAULT) {
+        /* The explicit list contains only AES-128-GCM, so both DTLS roles
+         * either negotiate that profile or fail the handshake. */
+        SSL_CTX_set_options(pSslCtx, SSL_OP_CIPHER_SERVER_PREFERENCE);
+    }
     *ppSslCtx = pSslCtx;
 
 CleanUp:
@@ -456,7 +481,9 @@ STATUS createDtlsSessionWithOptions(PDtlsSessionCallbacks pDtlsSessionCallbacks,
         }
     }
 
-    PROFILE_CALL(CHK_STATUS(createSslCtx(certInfos, pDtlsSession->certificateCount, &pDtlsSession->pSslCtx)), "Create SSL Context");
+    PROFILE_CALL(CHK_STATUS(createSslCtx(certInfos, pDtlsSession->certificateCount, pDtlsSession->configuredCipherPolicy,
+                                        &pDtlsSession->pSslCtx)),
+                 "Create SSL Context");
     PROFILE_CALL(CHK_STATUS(createSsl(pDtlsSession->pSslCtx, &pDtlsSession->pSsl)), "Create SSL session");
     SSL_set_app_data(pDtlsSession->pSsl, pDtlsSession);
     CHK_STATUS(dtlsSessionConfigureRemoteCertificateValidation(pDtlsSession));
@@ -942,6 +969,37 @@ STATUS dtlsSessionIsInitFinished(PDtlsSession pDtlsSession, PBOOL pIsConnected)
     // This does not reduce any start up timing, but it helps in getting the accurate DTLS setup time
     if (*pIsConnected) {
         dtlsSessionChangeState(pDtlsSession, RTC_DTLS_TRANSPORT_STATE_CONNECTED);
+    }
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pDtlsSession->sslLock);
+    }
+    releaseDtlsSession(pDtlsSession);
+    LEAVES();
+    return retStatus;
+}
+
+STATUS dtlsSessionGetMetrics(PDtlsSession pDtlsSession, PRtcDtlsMetrics pMetrics)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    BOOL locked = FALSE;
+    const SSL_CIPHER* pCipher = NULL;
+    PCHAR pCipherName = NULL;
+
+    acquireDtlsSession(pDtlsSession);
+    CHK(pDtlsSession != NULL && pMetrics != NULL, STATUS_NULL_ARG);
+
+    MUTEX_LOCK(pDtlsSession->sslLock);
+    locked = TRUE;
+    MEMSET(pMetrics, 0, SIZEOF(*pMetrics));
+    pMetrics->version = RTC_DTLS_METRICS_CURRENT_VERSION;
+    pMetrics->configuredCipherPolicy = pDtlsSession->configuredCipherPolicy;
+    pMetrics->handshakeComplete = SSL_is_init_finished(pDtlsSession->pSsl);
+    if (pMetrics->handshakeComplete && (pCipher = SSL_get_current_cipher(pDtlsSession->pSsl)) != NULL &&
+        (pCipherName = (PCHAR) SSL_CIPHER_get_name(pCipher)) != NULL) {
+        SNPRINTF(pMetrics->negotiatedCipher, ARRAY_SIZE(pMetrics->negotiatedCipher), "%s", pCipherName);
     }
 
 CleanUp:

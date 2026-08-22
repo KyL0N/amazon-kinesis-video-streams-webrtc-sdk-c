@@ -516,6 +516,32 @@ CleanUp:
     return retStatus;
 }
 
+STATUS dtlsSessionGetMetrics(PDtlsSession pDtlsSession, PRtcDtlsMetrics pMetrics)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    BOOL locked = FALSE;
+    const char* pCipherName = NULL;
+
+    CHK(pDtlsSession != NULL && pMetrics != NULL, STATUS_NULL_ARG);
+    MUTEX_LOCK(pDtlsSession->sslLock);
+    locked = TRUE;
+    MEMSET(pMetrics, 0, SIZEOF(*pMetrics));
+    pMetrics->version = RTC_DTLS_METRICS_CURRENT_VERSION;
+    pMetrics->configuredCipherPolicy = pDtlsSession->configuredCipherPolicy;
+    pMetrics->handshakeComplete = pDtlsSession->state == RTC_DTLS_TRANSPORT_STATE_CONNECTED;
+    if (pMetrics->handshakeComplete && (pCipherName = mbedtls_ssl_get_ciphersuite(&pDtlsSession->sslCtx)) != NULL) {
+        SNPRINTF(pMetrics->negotiatedCipher, ARRAY_SIZE(pMetrics->negotiatedCipher), "%s", pCipherName);
+    }
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pDtlsSession->sslLock);
+    }
+    LEAVES();
+    return retStatus;
+}
+
 STATUS dtlsSessionProcessPacket(PDtlsSession pDtlsSession, PBYTE pData, PINT32 pDataLen)
 {
     ENTERS();
